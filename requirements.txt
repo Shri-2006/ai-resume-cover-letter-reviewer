@@ -1,0 +1,23 @@
+# ─────────────────────────────────────────────
+#  Resume Tailoring & Cover Letter Generator
+#  requirements.txt
+# ─────────────────────────────────────────────
+
+# Streamlit – UI framework (free, OSS)
+streamlit>=1.35.0
+
+# python-docx – .docx read/write (free, OSS)
+python-docx>=1.1.2
+
+# SAP Generative AI Hub SDK – AI Core calls
+# Install from PyPI: pip install generative-ai-hub-sdk
+generative-ai-hub-sdk>=3.2.0
+
+# python-dotenv – load credentials from .env file (free, OSS)
+python-dotenv>=1.0.1
+
+# lxml – faster XML backend for python-docx (free, OSS)
+lxml>=5.2.2
+
+# Pillow – image handling in Streamlit (free, OSS, often a transitive dep)
+Pillow>=10.3.0
