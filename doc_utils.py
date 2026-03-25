@@ -46,25 +46,37 @@ from docx.oxml.ns import qn
 #  Public helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_docx(uploaded_file) -> Document:
+def load_docx(file_like) -> Document:
     """
-    Load a python-docx ``Document`` from a Streamlit ``UploadedFile``.
+    Load a python-docx ``Document`` from either:
+      • An ``io.BytesIO`` object (preferred – always seekable), or
+      • A Streamlit ``UploadedFile`` (legacy path – less reliable on cloud).
 
-    ``uploaded_file.read()`` returns raw bytes; we wrap them in a ``BytesIO``
-    so python-docx can treat it like a regular file handle.
+    The caller should always prefer passing ``io.BytesIO(cached_bytes)`` to
+    avoid Streamlit's UploadedFile buffer exhaustion on cloud deployments.
 
     Parameters
     ----------
-    uploaded_file : streamlit.runtime.uploaded_file_manager.UploadedFile
-        The file object returned by ``st.file_uploader``.
+    file_like : io.BytesIO | streamlit.runtime.uploaded_file_manager.UploadedFile
 
     Returns
     -------
     docx.Document
     """
-    # Ensure we read from the beginning (Streamlit may have already partially read it)
-    uploaded_file.seek(0)
-    return Document(io.BytesIO(uploaded_file.read()))
+    if isinstance(file_like, io.BytesIO):
+        # Already a proper in-memory buffer — just rewind and open.
+        file_like.seek(0)
+        return Document(file_like)
+
+    # UploadedFile path (fallback) — seek before reading to guard against
+    # partially-consumed buffers, then wrap in a fresh BytesIO so python-docx
+    # gets a guaranteed-seekable stream.
+    try:
+        file_like.seek(0)
+    except Exception:
+        pass  # Some UploadedFile implementations raise on seek — ignore safely
+    raw = file_like.read()
+    return Document(io.BytesIO(raw))
 
 
 def extract_resume_text(doc: Document) -> str:

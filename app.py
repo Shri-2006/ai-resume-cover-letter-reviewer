@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 
 import streamlit as st
@@ -193,6 +194,21 @@ st.divider()
 
 st.header("Step 1 — Upload Your Documents")
 
+# ── Byte-cache initialisation ─────────────────────────────────────────────────
+# WHY THIS MATTERS:
+# Streamlit's UploadedFile is a thin wrapper around a socket buffer.  Once read,
+# its internal pointer is at EOF and seek(0) is unreliable in cloud deployments
+# (the Streamlit Community Cloud runner does NOT guarantee seekability).
+# Clicking st.download_button also triggers a full app rerun which can reset
+# widget state before the download fires.
+#
+# Solution: the moment a file is uploaded we read its raw bytes ONCE and store
+# them in st.session_state under a stable key.  Every subsequent operation
+# creates a fresh io.BytesIO from those cached bytes — fully seekable, rerun-safe.
+for _key in ("bytes_base_resume", "bytes_resume_template", "bytes_cover_letter_template"):
+    if _key not in st.session_state:
+        st.session_state[_key] = None
+
 col_upload_left, col_upload_right = st.columns([1, 1], gap="large")
 
 with col_upload_left:
@@ -207,6 +223,11 @@ with col_upload_left:
         key="base_resume",
         help="This file is only read — it is never modified.",
     )
+    # Cache bytes immediately — before ANY other widget reads this file
+    if base_resume_file is not None:
+        st.session_state["bytes_base_resume"] = base_resume_file.read()
+    elif base_resume_file is None:
+        st.session_state["bytes_base_resume"] = None
 
 with col_upload_right:
     st.subheader("📝 Resume Template")
@@ -220,6 +241,10 @@ with col_upload_right:
         type=["docx"],
         key="resume_template",
     )
+    if resume_template_file is not None:
+        st.session_state["bytes_resume_template"] = resume_template_file.read()
+    elif resume_template_file is None:
+        st.session_state["bytes_resume_template"] = None
 
     st.subheader("✉️ Cover Letter Template")
     st.caption(
@@ -232,6 +257,16 @@ with col_upload_right:
         type=["docx"],
         key="cover_letter_template",
     )
+    if cover_letter_template_file is not None:
+        st.session_state["bytes_cover_letter_template"] = cover_letter_template_file.read()
+    elif cover_letter_template_file is None:
+        st.session_state["bytes_cover_letter_template"] = None
+
+# ── Convenience references to cached bytes ────────────────────────────────────
+# These are used everywhere below instead of the UploadedFile objects.
+_base_resume_bytes: bytes | None        = st.session_state["bytes_base_resume"]
+_resume_template_bytes: bytes | None    = st.session_state["bytes_resume_template"]
+_cover_letter_template_bytes: bytes | None = st.session_state["bytes_cover_letter_template"]
 
 st.divider()
 
@@ -263,11 +298,12 @@ st.divider()
 
 st.header("Step 3 — Preview & Confirm Resume Content")
 
-if base_resume_file:
+if _base_resume_bytes:
     with st.expander("👁️ View extracted base resume text (what the AI sees)", expanded=False):
         try:
-            # Load and extract text — file pointer reset inside load_docx()
-            base_doc = load_docx(base_resume_file)
+            # Always build a fresh BytesIO from the cached bytes — never read
+            # the UploadedFile object a second time (its pointer is at EOF).
+            base_doc = load_docx(io.BytesIO(_base_resume_bytes))
             extracted_text: str = extract_resume_text(base_doc)
 
             if extracted_text.strip():
@@ -309,12 +345,12 @@ st.header("Step 4 — Generate & Download")
 
 def _all_resume_inputs_ready() -> bool:
     """Return True only when every input required for resume tailoring is present."""
-    return bool(base_resume_file and resume_template_file and job_description_text.strip())
+    return bool(_base_resume_bytes and _resume_template_bytes and job_description_text.strip())
 
 
 def _all_cover_letter_inputs_ready() -> bool:
     """Return True only when every input required for cover letter generation is present."""
-    return bool(base_resume_file and cover_letter_template_file and job_description_text.strip())
+    return bool(_base_resume_bytes and _cover_letter_template_bytes and job_description_text.strip())
 
 
 col_gen_left, col_gen_right = st.columns([1, 1], gap="large")
@@ -327,9 +363,9 @@ with col_gen_left:
     st.subheader("📋 Tailored Resume")
 
     # Show a human-readable checklist of what's still missing
-    if not base_resume_file:
+    if not _base_resume_bytes:
         st.warning("⬆️  Upload your **base resume** in Step 1.")
-    if not resume_template_file:
+    if not _resume_template_bytes:
         st.warning("⬆️  Upload your **resume template** in Step 1.")
     if not job_description_text.strip():
         st.warning("✏️  Paste a **job description** in Step 2.")
@@ -350,9 +386,9 @@ with col_gen_left:
     ):
         with st.spinner(f"Tailoring your resume using **{selected_display}** …"):
             try:
-                # ── 1. Extract base resume text ───────────────────────────────
-                base_resume_file.seek(0)          # reset pointer before reading
-                base_doc_for_text = load_docx(base_resume_file)
+                # ── 1. Extract base resume text from cached bytes ─────────────
+                # Fresh BytesIO each time — fully seekable, rerun-safe.
+                base_doc_for_text = load_docx(io.BytesIO(_base_resume_bytes))
                 resume_text = extract_resume_text(base_doc_for_text)
 
                 if not resume_text.strip():
@@ -370,8 +406,9 @@ with col_gen_left:
                 )
 
                 # ── 3. Load a fresh copy of the resume template ───────────────
-                resume_template_file.seek(0)
-                resume_doc = load_docx(resume_template_file)
+                # Critical: build from cached bytes, NOT from the UploadedFile
+                # whose buffer is already exhausted after Step 1's .read() call.
+                resume_doc = load_docx(io.BytesIO(_resume_template_bytes))
 
                 # ── 4. Inject AI content into {{TAILORED_EXPERIENCE}} ─────────
                 replacements_made = replace_placeholder(
@@ -388,13 +425,13 @@ with col_gen_left:
                         "Add the placeholder to your template and try again."
                     )
 
-                # ── 5. Serialise to bytes for download ────────────────────────
+                # ── 5. Serialise the MODIFIED document to bytes ───────────────
                 st.session_state["tailored_resume_bytes"] = save_docx_to_bytes(resume_doc)
                 st.session_state["tailored_resume_text"] = tailored_content
 
                 st.success(
                     f"✅ Resume tailored successfully!  "
-                    f"({'placeholder found & replaced' if replacements_made else 'WARNING: placeholder not found'})"
+                    f"({'placeholder found & replaced' if replacements_made else 'WARNING: placeholder not found — see above'})"
                 )
 
             except RuntimeError as exc:
@@ -431,9 +468,9 @@ with col_gen_left:
 with col_gen_right:
     st.subheader("✉️ Cover Letter")
 
-    if not base_resume_file:
+    if not _base_resume_bytes:
         st.warning("⬆️  Upload your **base resume** in Step 1.")
-    if not cover_letter_template_file:
+    if not _cover_letter_template_bytes:
         st.warning("⬆️  Upload your **cover letter template** in Step 1.")
     if not job_description_text.strip():
         st.warning("✏️  Paste a **job description** in Step 2.")
@@ -453,9 +490,8 @@ with col_gen_right:
     ):
         with st.spinner(f"Writing your cover letter using **{selected_display}** …"):
             try:
-                # ── 1. Extract base resume text ───────────────────────────────
-                base_resume_file.seek(0)
-                base_doc_for_cl = load_docx(base_resume_file)
+                # ── 1. Extract base resume text from cached bytes ─────────────
+                base_doc_for_cl = load_docx(io.BytesIO(_base_resume_bytes))
                 resume_text_for_cl = extract_resume_text(base_doc_for_cl)
 
                 if not resume_text_for_cl.strip():
@@ -473,8 +509,7 @@ with col_gen_right:
                 )
 
                 # ── 3. Load a fresh copy of the cover letter template ─────────
-                cover_letter_template_file.seek(0)
-                cl_doc = load_docx(cover_letter_template_file)
+                cl_doc = load_docx(io.BytesIO(_cover_letter_template_bytes))
 
                 # ── 4. Inject AI content into {{COVER_LETTER_BODY}} ───────────
                 cl_replacements = replace_placeholder(
@@ -492,13 +527,13 @@ with col_gen_right:
                         "try again."
                     )
 
-                # ── 5. Serialise ───────────────────────────────────────────────
+                # ── 5. Serialise the MODIFIED document to bytes ───────────────
                 st.session_state["cover_letter_bytes"] = save_docx_to_bytes(cl_doc)
                 st.session_state["cover_letter_text"] = cover_letter_content
 
                 st.success(
                     f"✅ Cover letter generated!  "
-                    f"({'placeholder found & replaced' if cl_replacements else 'WARNING: placeholder not found'})"
+                    f"({'placeholder found & replaced' if cl_replacements else 'WARNING: placeholder not found — see above'})"
                 )
 
             except RuntimeError as exc:
