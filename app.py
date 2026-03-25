@@ -223,11 +223,13 @@ with col_upload_left:
         key="base_resume",
         help="This file is only read — it is never modified.",
     )
-    # Cache bytes immediately — before ANY other widget reads this file
+    # Cache bytes immediately — ONLY when a new file object arrives.
+    # IMPORTANT: do NOT clear the cache when file_uploader returns None.
+    # st.download_button triggers a rerun where file_uploader briefly returns
+    # None even though the user hasn't removed the file.  Clearing here would
+    # wipe the cached bytes and break the readiness checks on that rerun.
     if base_resume_file is not None:
         st.session_state["bytes_base_resume"] = base_resume_file.read()
-    elif base_resume_file is None:
-        st.session_state["bytes_base_resume"] = None
 
 with col_upload_right:
     st.subheader("📝 Resume Template")
@@ -243,8 +245,6 @@ with col_upload_right:
     )
     if resume_template_file is not None:
         st.session_state["bytes_resume_template"] = resume_template_file.read()
-    elif resume_template_file is None:
-        st.session_state["bytes_resume_template"] = None
 
     st.subheader("✉️ Cover Letter Template")
     st.caption(
@@ -259,8 +259,6 @@ with col_upload_right:
     )
     if cover_letter_template_file is not None:
         st.session_state["bytes_cover_letter_template"] = cover_letter_template_file.read()
-    elif cover_letter_template_file is None:
-        st.session_state["bytes_cover_letter_template"] = None
 
 # ── Convenience references to cached bytes ────────────────────────────────────
 # These are used everywhere below instead of the UploadedFile objects.
@@ -410,7 +408,14 @@ with col_gen_left:
                 # whose buffer is already exhausted after Step 1's .read() call.
                 resume_doc = load_docx(io.BytesIO(_resume_template_bytes))
 
-                # ── 4. Inject AI content into {{TAILORED_EXPERIENCE}} ─────────
+                # ── 4. DEBUG: show what text is actually in the template ───────
+                # This helps diagnose placeholder-not-found issues.
+                all_para_text = [p.text for p in resume_doc.paragraphs if p.text.strip()]
+                placeholder_found_in_scan = any(
+                    "{{TAILORED_EXPERIENCE}}" in p for p in all_para_text
+                )
+
+                # ── 5. Inject AI content into {{TAILORED_EXPERIENCE}} ─────────
                 replacements_made = replace_placeholder(
                     doc=resume_doc,
                     placeholder="{{TAILORED_EXPERIENCE}}",
@@ -419,14 +424,31 @@ with col_gen_left:
 
                 if replacements_made == 0:
                     st.warning(
-                        "⚠️  The placeholder `{{TAILORED_EXPERIENCE}}` was not "
-                        "found in your resume template.  The AI-generated text "
-                        "is shown below but was NOT injected into the document. "
-                        "Add the placeholder to your template and try again."
+                        "⚠️  The placeholder `{{TAILORED_EXPERIENCE}}` was **not found** "
+                        "in your resume template, so the AI content could not be injected. "
+                        "The download below contains the AI text as a **plain standalone document** instead."
                     )
+                    with st.expander("🔍 What your template actually contains (debug)", expanded=True):
+                        st.caption("These are the non-empty paragraphs found in your uploaded template:")
+                        for line in all_para_text[:30]:
+                            st.code(line, language=None)
+                        st.info(
+                            "If you see your resume content above, you need to **add** "
+                            "`{{TAILORED_EXPERIENCE}}` as a placeholder line in your template .docx "
+                            "where you want the AI content to appear."
+                        )
+                    # FALLBACK: build a clean standalone .docx with just the AI content
+                    from docx import Document as _Document
+                    fallback_doc = _Document()
+                    fallback_doc.add_heading("Tailored Resume Content", level=1)
+                    for line in tailored_content.split("\n"):
+                        fallback_doc.add_paragraph(line)
+                    output_doc_bytes = save_docx_to_bytes(fallback_doc)
+                else:
+                    output_doc_bytes = save_docx_to_bytes(resume_doc)
 
-                # ── 5. Serialise the MODIFIED document to bytes ───────────────
-                st.session_state["tailored_resume_bytes"] = save_docx_to_bytes(resume_doc)
+                # ── 6. Store bytes for download ───────────────────────────────
+                st.session_state["tailored_resume_bytes"] = output_doc_bytes
                 st.session_state["tailored_resume_text"] = tailored_content
 
                 st.success(
@@ -519,16 +541,31 @@ with col_gen_right:
                 )
 
                 if cl_replacements == 0:
+                    cl_para_text = [p.text for p in cl_doc.paragraphs if p.text.strip()]
                     st.warning(
-                        "⚠️  The placeholder `{{COVER_LETTER_BODY}}` was not "
-                        "found in your cover letter template.  The AI-generated "
-                        "text is shown below but was NOT injected into the "
-                        "document.  Add the placeholder to your template and "
-                        "try again."
+                        "⚠️  The placeholder `{{COVER_LETTER_BODY}}` was **not found** "
+                        "in your cover letter template. The download below contains the "
+                        "AI text as a **plain standalone document** instead."
                     )
+                    with st.expander("🔍 What your template actually contains (debug)", expanded=True):
+                        st.caption("These are the non-empty paragraphs found in your uploaded template:")
+                        for line in cl_para_text[:30]:
+                            st.code(line, language=None)
+                        st.info(
+                            "Add `{{COVER_LETTER_BODY}}` as a placeholder line in your "
+                            "cover letter template .docx where the body paragraphs should appear."
+                        )
+                    from docx import Document as _Document
+                    fallback_cl = _Document()
+                    fallback_cl.add_heading("Cover Letter Body", level=1)
+                    for line in cover_letter_content.split("\n"):
+                        fallback_cl.add_paragraph(line)
+                    cl_output_bytes = save_docx_to_bytes(fallback_cl)
+                else:
+                    cl_output_bytes = save_docx_to_bytes(cl_doc)
 
-                # ── 5. Serialise the MODIFIED document to bytes ───────────────
-                st.session_state["cover_letter_bytes"] = save_docx_to_bytes(cl_doc)
+                # ── 5. Store bytes for download ───────────────────────────────
+                st.session_state["cover_letter_bytes"] = cl_output_bytes
                 st.session_state["cover_letter_text"] = cover_letter_content
 
                 st.success(
