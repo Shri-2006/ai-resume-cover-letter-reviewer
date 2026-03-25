@@ -10,9 +10,15 @@ streamlit>=1.35.0
 python-docx>=1.1.2
 
 # SAP Generative AI Hub SDK – AI Core calls
-# Install from PyPI: pip install generative-ai-hub-sdk
 generative-ai-hub-sdk>=3.2.0
 
+# Force pydantic / pydantic-core versions that ship pre-built wheels for
+# Python 3.14.  The SDK pins pydantic==2.10.6 which drags in pydantic-core
+# 2.27.2, but that version has no Python 3.14 wheel and requires a Rust
+# compile that fails on Streamlit Community Cloud.  Overriding here with
+# versions that have official 3.14 wheels avoids the compile entirely.
+pydantic>=2.11.0
+pydantic-core>=2.33.0
 # python-dotenv – load credentials from .env file (free, OSS)
 python-dotenv>=1.0.1
 
