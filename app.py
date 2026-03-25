@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 import io, os
+from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -17,6 +18,23 @@ from doc_utils import (
 )
 
 load_dotenv()
+
+# ── Default (fallback) templates ──────────────────────────────────────────────
+# Bundled in the repo under templates/.  Used automatically when the user
+# does not upload their own template.
+_TEMPLATES_DIR = Path(__file__).parent / "templates"
+_DEFAULT_RESUME_TPL_PATH = _TEMPLATES_DIR / "default_resume_template.docx"
+_DEFAULT_CL_TPL_PATH     = _TEMPLATES_DIR / "default_cover_letter_template.docx"
+
+def _load_default_bytes(path: Path) -> bytes | None:
+    """Read a bundled template file and return its raw bytes, or None if missing."""
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        return None
+
+_DEFAULT_RESUME_BYTES = _load_default_bytes(_DEFAULT_RESUME_TPL_PATH)
+_DEFAULT_CL_BYTES     = _load_default_bytes(_DEFAULT_CL_TPL_PATH)
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -84,10 +102,14 @@ st.divider()
 st.header("Step 1 — Upload Your Documents")
 
 # Byte-cache: read each file ONCE into session_state.
-# Never clear the cache on rerun (download_button reruns would wipe it).
-for k in ("bytes_base_resume", "bytes_resume_template", "bytes_cover_letter_template"):
-    if k not in st.session_state:
-        st.session_state[k] = None
+# Initialise template slots with the bundled defaults so they work immediately
+# even if the user never uploads their own template.
+if "bytes_base_resume" not in st.session_state:
+    st.session_state["bytes_base_resume"] = None
+if "bytes_resume_template" not in st.session_state:
+    st.session_state["bytes_resume_template"] = _DEFAULT_RESUME_BYTES
+if "bytes_cover_letter_template" not in st.session_state:
+    st.session_state["bytes_cover_letter_template"] = _DEFAULT_CL_BYTES
 
 col_l, col_r = st.columns(2, gap="large")
 
@@ -100,14 +122,39 @@ with col_l:
 
 with col_r:
     st.subheader("📝 Resume Template")
-    st.caption("Any .docx resume template — no modifications needed.")
-    resume_tpl_file = st.file_uploader("Upload Resume Template (.docx)", type=["docx"], key="resume_template")
+    # Show whether the default or a custom template is active
+    _using_default_resume = (
+        st.session_state["bytes_resume_template"] == _DEFAULT_RESUME_BYTES
+        and _DEFAULT_RESUME_BYTES is not None
+    )
+    if _using_default_resume:
+        st.caption("✅ Using the **built-in Stony Brook template** — upload your own to override.")
+    else:
+        st.caption("✅ Using your **uploaded template**.")
+
+    resume_tpl_file = st.file_uploader(
+        "Upload Resume Template (.docx) — optional",
+        type=["docx"],
+        key="resume_template",
+    )
     if resume_tpl_file is not None:
         st.session_state["bytes_resume_template"] = resume_tpl_file.read()
 
     st.subheader("✉️ Cover Letter Template")
-    st.caption("Any .docx cover letter template — no modifications needed.")
-    cl_tpl_file = st.file_uploader("Upload Cover Letter Template (.docx)", type=["docx"], key="cl_template")
+    _using_default_cl = (
+        st.session_state["bytes_cover_letter_template"] == _DEFAULT_CL_BYTES
+        and _DEFAULT_CL_BYTES is not None
+    )
+    if _using_default_cl:
+        st.caption("✅ Using the **built-in Stony Brook template** — upload your own to override.")
+    else:
+        st.caption("✅ Using your **uploaded template**.")
+
+    cl_tpl_file = st.file_uploader(
+        "Upload Cover Letter Template (.docx) — optional",
+        type=["docx"],
+        key="cl_template",
+    )
     if cl_tpl_file is not None:
         st.session_state["bytes_cover_letter_template"] = cl_tpl_file.read()
 
@@ -160,7 +207,6 @@ with col_res:
     st.subheader("📋 Tailored Resume")
     res_ready = bool(_br and _rt and job_desc.strip())
     if not _br:  st.warning("⬆️ Upload your **base resume**.")
-    if not _rt:  st.warning("⬆️ Upload a **resume template**.")
     if not job_desc.strip(): st.warning("✏️ Paste a **job description**.")
 
     if st.button("✨ Tailor My Resume", disabled=(not res_ready or not creds_ok),
@@ -222,7 +268,6 @@ with col_cl:
     st.subheader("✉️ Cover Letter")
     cl_ready = bool(_br and _clt and job_desc.strip())
     if not _br:   st.warning("⬆️ Upload your **base resume**.")
-    if not _clt:  st.warning("⬆️ Upload a **cover letter template**.")
     if not job_desc.strip(): st.warning("✏️ Paste a **job description**.")
 
     if st.button("✨ Generate Cover Letter", disabled=(not cl_ready or not creds_ok),
