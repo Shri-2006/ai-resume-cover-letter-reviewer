@@ -135,6 +135,18 @@ Do NOT include salutation or sign-off — those are already in the template.
 """.strip()
 
 # ── Core LLM call ─────────────────────────────────────────────────────────────
+# Known SAP AI Core SDK error substrings that get returned as message content
+# instead of raised as exceptions in some SDK versions.
+_SAP_ERROR_PATTERNS = (
+    "no deployment found",
+    "deployment not found",
+    "no running deployment",
+    "could not find deployment",
+    "model not found",
+    "resource group",
+    "scenario not found",
+)
+
 def call_model(
     model_name: str,
     system_prompt: str,
@@ -148,16 +160,42 @@ def call_model(
     if not ok:
         raise RuntimeError(f"Missing env vars: {', '.join(missing)}")
     client = AICoreOpenAI()
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": user_prompt},
-        ],
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    return response.choices[0].message.content.strip()
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_prompt},
+            ],
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+    except Exception as e:
+        err = str(e)
+        # Re-raise SDK deployment errors as RuntimeError with clear guidance
+        if any(p in err.lower() for p in _SAP_ERROR_PATTERNS):
+            raise RuntimeError(
+                f"SAP AI Core could not find a running deployment for model "
+                f"'{model_name}'. Check that this model is deployed and "
+                f"running in your resource group via SAP AI Launchpad → "
+                f"ML Operations → Deployments.\n\nOriginal error: {err}"
+            ) from e
+        raise
+
+    content = response.choices[0].message.content.strip()
+
+    # Some SDK versions return error messages as content instead of raising.
+    # Detect and surface them properly before JSON parsing attempts them.
+    if any(p in content.lower() for p in _SAP_ERROR_PATTERNS):
+        raise RuntimeError(
+            f"SAP AI Core could not find a running deployment for model "
+            f"'{model_name}'.\n\n"
+            f"Go to SAP AI Launchpad → ML Operations → Deployments and "
+            f"confirm that '{model_name}' has status 'RUNNING'.\n\n"
+            f"SAP error: {content}"
+        )
+
+    return content
 
 # ── JSON parsing helper ───────────────────────────────────────────────────────
 def parse_replacements(raw: str) -> dict[str, str]:

@@ -244,9 +244,9 @@ with col_res:
             except ValueError as e:
                 st.error(f"Could not parse AI response as JSON: {e}")
             except RuntimeError as e:
-                st.error(f"Configuration error: {e}")
+                st.error(str(e))
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Unexpected error: {e}")
 
     if st.session_state["tailored_resume_text"]:
         with st.expander("👁️ Preview AI replacements", expanded=True):
@@ -301,9 +301,9 @@ with col_cl:
             except ValueError as e:
                 st.error(f"Could not parse AI response as JSON: {e}")
             except RuntimeError as e:
-                st.error(f"Configuration error: {e}")
+                st.error(str(e))
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Unexpected error: {e}")
 
     if st.session_state["cover_letter_text"]:
         with st.expander("👁️ Preview AI replacements", expanded=True):
