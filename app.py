@@ -1,9 +1,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
 #  app.py  –  AI Resume Tailor & Cover Letter Generator
+#  Supports multiple job applications in a single session.
 # ─────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
-import io, os
+import io
 from datetime import date
 from pathlib import Path
 import streamlit as st
@@ -19,12 +20,12 @@ from doc_utils import (
 
 load_dotenv()
 
-# ── Default bundled templates ─────────────────────────────────────────────────
-_TEMPLATES_DIR        = Path(__file__).parent / "templates"
-_DEFAULT_RESUME_BYTES = (_TEMPLATES_DIR / "default_resume_template.docx").read_bytes() \
-                        if (_TEMPLATES_DIR / "default_resume_template.docx").exists() else None
-_DEFAULT_CL_BYTES     = (_TEMPLATES_DIR / "default_cover_letter_template.docx").read_bytes() \
-                        if (_TEMPLATES_DIR / "default_cover_letter_template.docx").exists() else None
+# ── Bundled default templates ─────────────────────────────────────────────────
+_TPL_DIR              = Path(__file__).parent / "templates"
+_DEFAULT_RESUME_BYTES = (_TPL_DIR / "default_resume_template.docx").read_bytes() \
+                        if (_TPL_DIR / "default_resume_template.docx").exists() else None
+_DEFAULT_CL_BYTES     = (_TPL_DIR / "default_cover_letter_template.docx").read_bytes() \
+                        if (_TPL_DIR / "default_cover_letter_template.docx").exists() else None
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -42,13 +43,16 @@ st.markdown("""
     padding: .75rem 1rem; border-radius: 4px; font-size: .9rem;
 }
 .preview-box {
-    background: #fafafa; border: 1px solid #e0e0e0;
-    border-radius: 6px; padding: 1.2rem 1.4rem;
-    font-family: 'Georgia', serif; font-size: .88rem;
+    background: #fafafa; border: 1px solid #e0e0e0; border-radius: 6px;
+    padding: 1.2rem 1.4rem; font-family: Georgia, serif; font-size: .88rem;
     line-height: 1.65; white-space: pre-wrap;
-    max-height: 480px; overflow-y: auto;
+    max-height: 400px; overflow-y: auto;
 }
-.preview-box hr { border: none; border-top: 1px solid #ccc; margin: .5rem 0; }
+.job-card {
+    border: 1px solid #e0e0e0; border-radius: 8px;
+    padding: 1.2rem 1.4rem; margin-bottom: 1rem;
+    background: #ffffff;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -58,8 +62,12 @@ with st.sidebar:
     st.divider()
 
     st.subheader("🤖 AI Model")
-    selected_display = st.selectbox("Select model", list(AVAILABLE_MODELS.keys()), index=0)
-    selected_model   = AVAILABLE_MODELS[selected_display]
+    selected_display = st.selectbox(
+        "Select model",
+        list(AVAILABLE_MODELS.keys()),
+        index=0,   # GPT-5.2 is first in the dict
+    )
+    selected_model = AVAILABLE_MODELS[selected_display]
     st.caption(f"Model ID: `{selected_model}`")
 
     st.divider()
@@ -82,29 +90,32 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-# ── Header ────────────────────────────────────────────────────────────────────
+# ── Page header ───────────────────────────────────────────────────────────────
 st.title("📄 AI Resume Tailor & Cover Letter Generator")
 st.caption(
-    "Upload any .docx template — no placeholders needed. "
-    "The AI reads the structure and fills it in with your real experience."
+    "Upload your base resume once — generate tailored documents for as many "
+    "jobs as you want in a single session."
 )
 st.divider()
 
-# ── Session state initialisation ─────────────────────────────────────────────
+# ── Session state setup ───────────────────────────────────────────────────────
 for k, default in [
-    ("bytes_base_resume",            None),
-    ("bytes_resume_template",        _DEFAULT_RESUME_BYTES),
-    ("bytes_cover_letter_template",  _DEFAULT_CL_BYTES),
-    ("tailored_resume_bytes",        None),
-    ("tailored_resume_preview",      None),
-    ("cover_letter_bytes",           None),
-    ("cover_letter_preview",         None),
+    ("bytes_base_resume",           None),
+    ("bytes_resume_template",       _DEFAULT_RESUME_BYTES),
+    ("bytes_cover_letter_template", _DEFAULT_CL_BYTES),
 ]:
     if k not in st.session_state:
         st.session_state[k] = default
 
+# Jobs list: each job is a dict with a unique id.
+# All widget state (labels, descriptions, outputs) lives in session_state
+# under keys scoped by the job id (e.g. "jlabel_3", "jdesc_3").
+if "jobs" not in st.session_state:
+    st.session_state["jobs"]         = [{"id": 0}]
+    st.session_state["next_job_id"]  = 1
+
 # ─────────────────────────────────────────────────────────────────────────────
-#  STEP 1 — Upload Documents
+#  STEP 1 — Documents
 # ─────────────────────────────────────────────────────────────────────────────
 st.header("Step 1 — Upload Your Documents")
 
@@ -112,245 +123,308 @@ col_l, col_r = st.columns(2, gap="large")
 
 with col_l:
     st.subheader("📋 Base Resume")
-    st.caption("Your master resume — the AI uses only facts from this file.")
-    base_file = st.file_uploader("Upload Base Resume (.docx)", type=["docx"], key="base_resume")
-    if base_file is not None:
-        st.session_state["bytes_base_resume"] = base_file.read()
+    st.caption("Your master resume — AI uses only facts from this file.")
+    bf = st.file_uploader("Upload Base Resume (.docx)", type=["docx"], key="base_resume")
+    if bf is not None:
+        st.session_state["bytes_base_resume"] = bf.read()
+
+    # Inline preview
+    if st.session_state["bytes_base_resume"]:
+        with st.expander("👁️ Preview extracted resume text", expanded=False):
+            try:
+                pdoc = load_docx(io.BytesIO(st.session_state["bytes_base_resume"]))
+                ptxt = extract_resume_text(pdoc)
+                if ptxt.strip():
+                    st.text_area("Extracted text", value=ptxt, height=220, disabled=True)
+                    st.caption(f"{len(ptxt.split())} words")
+                else:
+                    st.warning("No text found — resume may use images or text boxes.")
+            except Exception as e:
+                st.error(f"Could not read resume: {e}")
 
 with col_r:
     st.subheader("📝 Resume Template")
-    _def_r = st.session_state["bytes_resume_template"] == _DEFAULT_RESUME_BYTES and _DEFAULT_RESUME_BYTES
-    st.caption("✅ Using **built-in template**" if _def_r else "✅ Using **your template**")
-    rt_file = st.file_uploader("Upload Resume Template — optional", type=["docx"], key="resume_tpl")
-    if rt_file is not None:
-        st.session_state["bytes_resume_template"] = rt_file.read()
+    _dr = st.session_state["bytes_resume_template"] == _DEFAULT_RESUME_BYTES and _DEFAULT_RESUME_BYTES
+    st.caption("✅ Using **built-in template**" if _dr else "✅ Using **your template**")
+    rtf = st.file_uploader("Upload Resume Template — optional", type=["docx"], key="rtpl")
+    if rtf is not None:
+        st.session_state["bytes_resume_template"] = rtf.read()
 
     st.subheader("✉️ Cover Letter Template")
-    _def_cl = st.session_state["bytes_cover_letter_template"] == _DEFAULT_CL_BYTES and _DEFAULT_CL_BYTES
-    st.caption("✅ Using **built-in template**" if _def_cl else "✅ Using **your template**")
-    cl_file = st.file_uploader("Upload Cover Letter Template — optional", type=["docx"], key="cl_tpl")
-    if cl_file is not None:
-        st.session_state["bytes_cover_letter_template"] = cl_file.read()
+    _dc = st.session_state["bytes_cover_letter_template"] == _DEFAULT_CL_BYTES and _DEFAULT_CL_BYTES
+    st.caption("✅ Using **built-in template**" if _dc else "✅ Using **your template**")
+    clf = st.file_uploader("Upload Cover Letter Template — optional", type=["docx"], key="cltpl")
+    if clf is not None:
+        st.session_state["bytes_cover_letter_template"] = clf.read()
 
 _br  = st.session_state["bytes_base_resume"]
 _rt  = st.session_state["bytes_resume_template"]
 _clt = st.session_state["bytes_cover_letter_template"]
-
 st.divider()
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  STEP 2 — Your Details
+#  STEP 2 — Your Details (filled once, applied to every job)
 # ─────────────────────────────────────────────────────────────────────────────
 st.header("Step 2 — Your Details")
-st.caption(
-    "These replace the placeholder name, contact info, company details, and "
-    "signature in your template. Leave blank to keep the template's original text."
-)
+st.caption("Filled in once — applied to every job you generate.")
 
 with st.expander("👤 Personal & Contact Information", expanded=True):
-    pi_col1, pi_col2 = st.columns(2, gap="large")
-    with pi_col1:
-        user_name     = st.text_input("Full Name",    placeholder="Jane Doe",              key="u_name")
-        user_location = st.text_input("Location",     placeholder="New York, NY",           key="u_loc")
-        user_email    = st.text_input("Email",        placeholder="jane@email.com",         key="u_email")
-    with pi_col2:
-        user_phone    = st.text_input("Phone",        placeholder="(555) 123-4567",         key="u_phone")
-        user_linkedin = st.text_input("LinkedIn URL", placeholder="linkedin.com/in/janedoe",key="u_li")
+    c1, c2 = st.columns(2, gap="large")
+    with c1:
+        user_name     = st.text_input("Full Name",    placeholder="Jane Doe",               key="u_name")
+        user_location = st.text_input("Location",     placeholder="New York, NY",            key="u_loc")
+        user_email    = st.text_input("Email",        placeholder="jane@email.com",          key="u_email")
+    with c2:
+        user_phone    = st.text_input("Phone",        placeholder="(555) 123-4567",          key="u_phone")
+        user_linkedin = st.text_input("LinkedIn URL", placeholder="linkedin.com/in/janedoe", key="u_li")
 
 with st.expander("🏢 Cover Letter — Company & Date", expanded=True):
-    cl_col1, cl_col2 = st.columns(2, gap="large")
-    with cl_col1:
-        company_name  = st.text_input("Company Name",       placeholder="Acme Corp",              key="c_name")
-        company_addr1 = st.text_input("Company Address",    placeholder="123 Main St (optional)", key="c_addr1")
-    with cl_col2:
-        company_addr2 = st.text_input("City, State ZIP",    placeholder="New York, NY 10001 (optional)", key="c_addr2")
-        letter_date   = st.text_input(
+    cc1, cc2 = st.columns(2, gap="large")
+    with cc1:
+        # Note: company name / address are per-job, but we put global defaults here.
+        # Users can override per job below.
+        default_company  = st.text_input("Default Company Name",    placeholder="Leave blank to fill per job", key="def_company")
+        default_addr1    = st.text_input("Company Address",         placeholder="123 Main St (optional)",      key="def_addr1")
+    with cc2:
+        default_addr2    = st.text_input("City, State ZIP",         placeholder="New York, NY 10001 (optional)", key="def_addr2")
+        default_date     = st.text_input(
             "Letter Date",
             value=date.today().strftime("%B %d, %Y"),
-            key="c_date",
+            key="def_date",
         )
-
-# Bundle user info for injection
-user_info = {
-    "name":          user_name,
-    "location":      user_location,
-    "email":         user_email,
-    "phone":         user_phone,
-    "linkedin":      user_linkedin,
-    "company":       company_name,
-    "company_addr1": company_addr1,
-    "company_addr2": company_addr2,
-    "date":          letter_date,
-}
 
 st.divider()
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  STEP 3 — Job Description
+#  Helper: error message for JSON parse failures
 # ─────────────────────────────────────────────────────────────────────────────
-st.header("Step 3 — Paste the Job Description")
-job_desc = st.text_area(
-    "Target Job Description",
-    height=200,
-    placeholder="Paste the full job posting — role title, responsibilities, requirements…",
+_JSON_ERR_HINT = (
+    "Try a different model — **GPT-4.1**, **GPT-4.1 Mini**, and "
+    "**Claude 3.5 Sonnet** are the most reliable for structured output."
 )
-st.divider()
+
+def _gen_error(label: str, exc: Exception) -> None:
+    if isinstance(exc, ValueError):
+        st.error(f"AI response could not be parsed as JSON (even after retry).\n\n{_JSON_ERR_HINT}")
+    elif isinstance(exc, RuntimeError):
+        st.error(str(exc))
+    else:
+        st.error(f"Unexpected error: {exc}")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  STEP 4 — Preview Base Resume
+#  Helper: run one generation (resume or cover letter) for a given job
 # ─────────────────────────────────────────────────────────────────────────────
-st.header("Step 4 — Preview Your Base Resume")
-if _br:
-    with st.expander("👁️ What the AI will read from your base resume", expanded=False):
+def _generate(
+    job_id: int,
+    kind: str,          # "resume" or "cl"
+    job_desc: str,
+    company_override: str,
+    spinner_label: str,
+) -> None:
+    """
+    Generate a tailored document for one job and store results in session_state.
+    kind="resume" → uses resume template
+    kind="cl"     → uses cover letter template
+    """
+    bytes_key   = f"j{kind}_bytes_{job_id}"
+    preview_key = f"j{kind}_preview_{job_id}"
+
+    tpl_bytes = _rt if kind == "resume" else _clt
+    if not tpl_bytes:
+        st.error("No template loaded.")
+        return
+
+    with st.spinner(spinner_label):
         try:
-            preview_doc = load_docx(io.BytesIO(_br))
-            text = extract_resume_text(preview_doc)
-            if text.strip():
-                st.text_area("Extracted text (read-only)", value=text, height=260, disabled=True)
-                st.caption(
-                    f"{len(text.split())} words · "
-                    f"{len(preview_doc.paragraphs)} paragraphs · "
-                    f"{len(preview_doc.tables)} table(s)"
-                )
+            base_text = extract_resume_text(load_docx(io.BytesIO(_br)))
+            if not base_text.strip():
+                st.error("No text found in base resume.")
+                return
+
+            tpl_doc = load_docx(io.BytesIO(tpl_bytes))
+            tpl_ctx = get_template_context(tpl_doc)
+
+            if kind == "resume":
+                replacements = tailor_resume(base_text, job_desc, tpl_ctx, selected_model)
             else:
-                st.warning("No text extracted — your resume may use images or text boxes.")
-        except Exception as e:
-            st.error(f"Could not read base resume: {e}")
-else:
-    st.info("Upload your base resume in Step 1 to preview its content here.")
+                replacements = generate_cover_letter(base_text, job_desc, tpl_ctx, selected_model)
 
-st.divider()
+            if not replacements:
+                st.error("AI returned no replacements. Try a different model.")
+                return
+
+            out_doc = load_docx(io.BytesIO(tpl_bytes))
+            apply_paragraph_replacements(out_doc, replacements)
+
+            # Build per-job user info (override company name if provided)
+            job_user_info = {
+                "name":          user_name,
+                "location":      user_location,
+                "email":         user_email,
+                "phone":         user_phone,
+                "linkedin":      user_linkedin,
+                "company":       company_override or default_company,
+                "company_addr1": default_addr1,
+                "company_addr2": default_addr2,
+                "date":          default_date,
+            }
+            apply_user_info(out_doc, job_user_info)
+
+            st.session_state[bytes_key]   = save_docx_to_bytes(out_doc)
+            st.session_state[preview_key] = build_document_preview(out_doc)
+
+        except Exception as exc:
+            _gen_error(kind, exc)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  STEP 5 — Generate & Download
+#  STEP 3 — Job Applications
 # ─────────────────────────────────────────────────────────────────────────────
-st.header("Step 5 — Generate & Download")
+st.header("Step 3 — Job Applications")
+st.caption(
+    "Add one application per job. Each gets its own tailored resume and cover letter."
+)
 
-col_res, col_cl = st.columns(2, gap="large")
+if not _br:
+    st.warning("⬆️ Upload your **base resume** in Step 1 to enable generation.")
 
-# ── Resume ────────────────────────────────────────────────────────────────────
-with col_res:
-    st.subheader("📋 Tailored Resume")
-    res_ready = bool(_br and _rt and job_desc.strip())
-    if not _br:            st.warning("⬆️ Upload your **base resume** in Step 1.")
-    if not job_desc.strip(): st.warning("✏️ Paste a **job description** in Step 3.")
+jobs = st.session_state["jobs"]
 
-    if st.button("✨ Tailor My Resume",
-                 disabled=(not res_ready or not creds_ok),
-                 use_container_width=True, type="primary"):
-        with st.spinner(f"Tailoring with **{selected_display}**…"):
-            try:
-                # 1. Extract base resume text
-                base_text = extract_resume_text(load_docx(io.BytesIO(_br)))
-                if not base_text.strip():
-                    st.error("No text found in base resume.")
-                    st.stop()
+for i, job in enumerate(jobs):
+    job_id = job["id"]
 
-                # 2. Get template structure and ask AI
-                tpl_doc = load_docx(io.BytesIO(_rt))
-                replacements = tailor_resume(
-                    base_text, job_desc, get_template_context(tpl_doc), selected_model
-                )
-                if not replacements:
-                    st.error("AI returned no replacements. Try a different model.")
-                    st.stop()
+    # Per-job session state keys
+    res_bytes_key   = f"jresume_bytes_{job_id}"
+    res_preview_key = f"jresume_preview_{job_id}"
+    cl_bytes_key    = f"jcl_bytes_{job_id}"
+    cl_preview_key  = f"jcl_preview_{job_id}"
+    for k in [res_bytes_key, res_preview_key, cl_bytes_key, cl_preview_key]:
+        if k not in st.session_state:
+            st.session_state[k] = None
 
-                # 3. Apply AI replacements to a fresh template copy
-                out_doc = load_docx(io.BytesIO(_rt))
-                n = apply_paragraph_replacements(out_doc, replacements)
+    # ── Job card ──────────────────────────────────────────────────────────────
+    with st.container(border=True):
 
-                # 4. Apply user info (name, contact, etc.) on top
-                apply_user_info(out_doc, user_info)
-
-                # 5. Save
-                st.session_state["tailored_resume_bytes"]   = save_docx_to_bytes(out_doc)
-                st.session_state["tailored_resume_preview"] = build_document_preview(out_doc)
-                st.success(f"✅ Done — {n} section(s) tailored.")
-
-            except ValueError as e:
-                st.error(
-                    f"The AI's response could not be parsed as JSON even after retry.\n\n{e}\n\n"
-                    "Try a different model — GPT-4.1 and Claude 4.5 Sonnet are most reliable."
-                )
-            except RuntimeError as e:
-                st.error(str(e))
-            except Exception as e:
-                st.error(f"Unexpected error: {e}")
-
-    if st.session_state["tailored_resume_preview"]:
-        with st.expander("👁️ Preview — Tailored Resume", expanded=True):
-            st.markdown(
-                f'<div class="preview-box">{st.session_state["tailored_resume_preview"]}</div>',
-                unsafe_allow_html=True,
+        # Header row: job label + delete button
+        hc1, hc2 = st.columns([6, 1])
+        with hc1:
+            label_val = st.text_input(
+                "Job Title & Company  (for your reference)",
+                placeholder="e.g. Software Engineer @ Acme Corp",
+                key=f"jlabel_{job_id}",
             )
+        with hc2:
+            st.write("")  # vertical alignment nudge
+            st.write("")
+            if st.button("🗑️", key=f"jdel_{job_id}", help="Remove this application",
+                         disabled=(len(jobs) == 1)):
+                st.session_state["jobs"] = [j for j in jobs if j["id"] != job_id]
+                # Clean up state for deleted job
+                for k in [res_bytes_key, res_preview_key, cl_bytes_key, cl_preview_key,
+                          f"jlabel_{job_id}", f"jdesc_{job_id}", f"jcompany_{job_id}"]:
+                    st.session_state.pop(k, None)
+                st.rerun()
 
-    if st.session_state["tailored_resume_bytes"]:
-        st.download_button(
-            "⬇️  Download Tailored Resume (.docx)",
-            data=st.session_state["tailored_resume_bytes"],
-            file_name="tailored_resume.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True,
+        # Company override for cover letter
+        company_val = st.text_input(
+            "Company Name  (overrides default above)",
+            placeholder="Leave blank to use default",
+            key=f"jcompany_{job_id}",
         )
 
-# ── Cover Letter ──────────────────────────────────────────────────────────────
-with col_cl:
-    st.subheader("✉️ Cover Letter")
-    cl_ready = bool(_br and _clt and job_desc.strip())
-    if not _br:            st.warning("⬆️ Upload your **base resume** in Step 1.")
-    if not job_desc.strip(): st.warning("✏️ Paste a **job description** in Step 3.")
-
-    if st.button("✨ Generate Cover Letter",
-                 disabled=(not cl_ready or not creds_ok),
-                 use_container_width=True, type="primary"):
-        with st.spinner(f"Writing with **{selected_display}**…"):
-            try:
-                base_text2 = extract_resume_text(load_docx(io.BytesIO(_br)))
-                if not base_text2.strip():
-                    st.error("No text found in base resume.")
-                    st.stop()
-
-                cl_tpl_doc = load_docx(io.BytesIO(_clt))
-                replacements_cl = generate_cover_letter(
-                    base_text2, job_desc, get_template_context(cl_tpl_doc), selected_model
-                )
-                if not replacements_cl:
-                    st.error("AI returned no replacements.")
-                    st.stop()
-
-                out_cl = load_docx(io.BytesIO(_clt))
-                n_cl = apply_paragraph_replacements(out_cl, replacements_cl)
-                apply_user_info(out_cl, user_info)
-
-                st.session_state["cover_letter_bytes"]   = save_docx_to_bytes(out_cl)
-                st.session_state["cover_letter_preview"] = build_document_preview(out_cl)
-                st.success(f"✅ Done — {n_cl} section(s) written.")
-
-            except ValueError as e:
-                st.error(
-                    f"The AI's response could not be parsed as JSON even after retry.\n\n{e}\n\n"
-                    "Try a different model — GPT-4.1 and Claude 3.5 Sonnet are most reliable."
-                )
-            except RuntimeError as e:
-                st.error(str(e))
-            except Exception as e:
-                st.error(f"Unexpected error: {e}")
-
-    if st.session_state["cover_letter_preview"]:
-        with st.expander("👁️ Preview — Cover Letter", expanded=True):
-            st.markdown(
-                f'<div class="preview-box">{st.session_state["cover_letter_preview"]}</div>',
-                unsafe_allow_html=True,
-            )
-
-    if st.session_state["cover_letter_bytes"]:
-        st.download_button(
-            "⬇️  Download Cover Letter (.docx)",
-            data=st.session_state["cover_letter_bytes"],
-            file_name="cover_letter.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True,
+        # Job description
+        desc_val = st.text_area(
+            "Job Description",
+            placeholder="Paste the full job posting — role title, responsibilities, requirements…",
+            height=180,
+            key=f"jdesc_{job_id}",
         )
+
+        job_ready = bool(_br and _rt and _clt and desc_val.strip())
+
+        # Generate buttons
+        gc1, gc2 = st.columns(2, gap="medium")
+
+        with gc1:
+            if st.button(
+                "✨ Tailor Resume",
+                key=f"jbtn_res_{job_id}",
+                disabled=(not job_ready or not creds_ok),
+                use_container_width=True,
+                type="primary",
+            ):
+                _generate(
+                    job_id, "resume", desc_val, company_val,
+                    f"Tailoring resume with **{selected_display}**…",
+                )
+
+        with gc2:
+            if st.button(
+                "✨ Cover Letter",
+                key=f"jbtn_cl_{job_id}",
+                disabled=(not job_ready or not creds_ok),
+                use_container_width=True,
+                type="primary",
+            ):
+                _generate(
+                    job_id, "cl", desc_val, company_val,
+                    f"Writing cover letter with **{selected_display}**…",
+                )
+
+        # ── Outputs ───────────────────────────────────────────────────────────
+        has_resume = st.session_state[res_bytes_key] is not None
+        has_cl     = st.session_state[cl_bytes_key]  is not None
+
+        if has_resume or has_cl:
+            out_c1, out_c2 = st.columns(2, gap="medium")
+
+            with out_c1:
+                if has_resume:
+                    # Derive a sensible filename from the label
+                    slug = (label_val or f"job_{job_id}").replace(" ", "_").replace("/", "-")[:40]
+                    with st.expander("👁️ Resume Preview", expanded=False):
+                        st.markdown(
+                            f'<div class="preview-box">'
+                            f'{st.session_state[res_preview_key]}'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+                    st.download_button(
+                        "⬇️ Download Resume",
+                        data=st.session_state[res_bytes_key],
+                        file_name=f"resume_{slug}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True,
+                        key=f"jdl_res_{job_id}",
+                    )
+
+            with out_c2:
+                if has_cl:
+                    slug = (label_val or f"job_{job_id}").replace(" ", "_").replace("/", "-")[:40]
+                    with st.expander("👁️ Cover Letter Preview", expanded=False):
+                        st.markdown(
+                            f'<div class="preview-box">'
+                            f'{st.session_state[cl_preview_key]}'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+                    st.download_button(
+                        "⬇️ Download Cover Letter",
+                        data=st.session_state[cl_bytes_key],
+                        file_name=f"cover_letter_{slug}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True,
+                        key=f"jdl_cl_{job_id}",
+                    )
+
+# ── Add job button ────────────────────────────────────────────────────────────
+st.write("")
+if st.button("➕ Add Another Job Application", use_container_width=False):
+    new_id = st.session_state["next_job_id"]
+    st.session_state["jobs"].append({"id": new_id})
+    st.session_state["next_job_id"] = new_id + 1
+    st.rerun()
 
 st.divider()
 st.markdown("""

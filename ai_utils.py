@@ -6,12 +6,14 @@ from __future__ import annotations
 import json, os, re, time
 import requests
 
-# ── Model catalogue ───────────────────────────────────────────────────────────
+# ── Model catalogue  (GPT-5.2 is the default — listed first) ─────────────────
 AVAILABLE_MODELS: dict[str, str] = {
+    # Default
+    "GPT-5.2  (OpenAI)":                  "gpt-5.2",
+    # OpenAI
     "GPT-5  (OpenAI)":                    "gpt-5",
     "GPT-5 Mini  (OpenAI)":               "gpt-5-mini",
     "GPT-5 Nano  (OpenAI)":               "gpt-5-nano",
-    "GPT-5.2  (OpenAI)":                  "gpt-5.2",
     "GPT-4.1  (OpenAI)":                  "gpt-4.1",
     "GPT-4.1 Mini  (OpenAI)":             "gpt-4.1-mini",
     "GPT-4.1 Nano  (OpenAI)":             "gpt-4.1-nano",
@@ -21,6 +23,7 @@ AVAILABLE_MODELS: dict[str, str] = {
     "o3  (OpenAI)":                       "o3",
     "o3 Mini  (OpenAI)":                  "o3-mini",
     "o4 Mini  (OpenAI)":                  "o4-mini",
+    # Anthropic
     "Claude 4.6 Sonnet  (Anthropic)":     "anthropic--claude-4.6-sonnet",
     "Claude 4.6 Opus  (Anthropic)":       "anthropic--claude-4.6-opus",
     "Claude 4.5 Sonnet  (Anthropic)":     "anthropic--claude-4.5-sonnet",
@@ -31,29 +34,37 @@ AVAILABLE_MODELS: dict[str, str] = {
     "Claude 3.7 Sonnet  (Anthropic)":     "anthropic--claude-3.7-sonnet",
     "Claude 3.5 Sonnet  (Anthropic)":     "anthropic--claude-3.5-sonnet",
     "Claude 3 Haiku  (Anthropic)":        "anthropic--claude-3-haiku",
+    # Google
     "Gemini 3 Pro Preview  (Google)":     "gemini-3-pro-preview",
     "Gemini 2.5 Pro  (Google)":           "gemini-2.5-pro",
     "Gemini 2.5 Flash  (Google)":         "gemini-2.5-flash",
     "Gemini 2.5 Flash Lite  (Google)":    "gemini-2.5-flash-lite",
     "Gemini 2.0 Flash  (Google)":         "gemini-2.0-flash",
     "Gemini 2.0 Flash Lite  (Google)":    "gemini-2.0-flash-lite",
+    # Amazon
     "Nova Premier  (Amazon)":             "amazon--nova-premier",
     "Nova Pro  (Amazon)":                 "amazon--nova-pro",
     "Nova Lite  (Amazon)":                "amazon--nova-lite",
     "Nova Micro  (Amazon)":               "amazon--nova-micro",
+    # Mistral AI
     "Mistral Large  (Mistral AI)":        "mistralai--mistral-large-instruct",
     "Mistral Medium  (Mistral AI)":       "mistralai--mistral-medium-instruct",
     "Mistral Small  (Mistral AI)":        "mistralai--mistral-small-instruct",
+    # Meta
     "Llama 3 70B  (Meta)":                "meta--llama3-70b-instruct",
+    # DeepSeek
     "DeepSeek R1 0528  (DeepSeek)":       "deepseek-r1-0528",
     "DeepSeek V3.2  (DeepSeek)":          "deepseek-v3.2",
+    # Qwen
     "Qwen3 Max  (Alibaba)":               "qwen3-max",
     "Qwen3.5 Plus  (Alibaba)":            "qwen3.5-plus",
     "Qwen Turbo  (Alibaba)":              "qwen-turbo",
     "Qwen Flash  (Alibaba)":              "qwen-flash",
+    # Perplexity
     "Sonar Pro  (Perplexity)":            "sonar-pro",
     "Sonar  (Perplexity)":                "sonar",
     "Sonar Deep Research  (Perplexity)":  "sonar-deep-research",
+    # Cohere
     "Command A Reasoning  (Cohere)":      "cohere--command-a-reasoning",
 }
 
@@ -75,7 +86,7 @@ def _get_bearer_token() -> str:
     now = time.time()
     if _token_cache["token"] and now < _token_cache["expires_at"]:
         return _token_cache["token"]
-    auth_url      = os.environ["SAP_AUTH_URL"].rstrip("/")
+    auth_url = os.environ["SAP_AUTH_URL"].rstrip("/")
     if not auth_url.endswith("/oauth/token"):
         auth_url += "/oauth/token"
     resp = requests.post(
@@ -91,7 +102,7 @@ def _get_bearer_token() -> str:
     return _token_cache["token"]
 
 
-# ── Honesty guardrails (hardcoded) ────────────────────────────────────────────
+# ── Honesty guardrails ────────────────────────────────────────────────────────
 _RESUME_SYSTEM = """
 You are an ethical resume tailor. You are strictly forbidden from inventing,
 assuming, or adding any skills, metrics, job titles, degrees, or experiences
@@ -147,9 +158,8 @@ def call_model(
 ) -> str:
     """
     Call SAP AI Core via the Orchestration endpoint.
-    Temperature is intentionally omitted — it is unsupported by GPT-5 and
-    o-series models, and the system prompt provides sufficient behavioral
-    guidance without it.
+    Temperature is intentionally omitted — it is unsupported by GPT-5/o-series
+    models and the system prompt provides sufficient behavioral guidance.
     """
     ok, missing = validate_credentials()
     if not ok:
@@ -212,9 +222,8 @@ def call_model(
         )
 
 
-# ── JSON parsing ──────────────────────────────────────────────────────────────
+# ── JSON parsing with auto-retry ─────────────────────────────────────────────
 def parse_replacements(raw: str) -> dict[str, str]:
-    """Extract the replacements dict from the AI response, handling common noise."""
     cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
     try:
         data = json.loads(cleaned)
@@ -238,10 +247,7 @@ def _call_with_retry(
     user_prompt: str,
     max_tokens: int,
 ) -> dict[str, str]:
-    """
-    Call the model and parse JSON.  On parse failure, retry once with an
-    explicit JSON-only enforcement suffix added to the prompt.
-    """
+    """Call model and parse JSON. Auto-retries once with stricter prompt on parse failure."""
     raw = call_model(model_name, system_prompt, user_prompt, max_tokens)
     try:
         return parse_replacements(raw)
@@ -250,10 +256,10 @@ def _call_with_retry(
             user_prompt
             + "\n\n⚠️ IMPORTANT: Your previous response could not be parsed as JSON. "
             "You MUST return ONLY a raw JSON object — start with { and end with }. "
-            "Absolutely no text before or after it. No markdown. No backticks."
+            "No text before or after. No markdown. No backticks."
         )
         raw2 = call_model(model_name, system_prompt, retry_prompt, max_tokens)
-        return parse_replacements(raw2)  # raises ValueError if still broken
+        return parse_replacements(raw2)
 
 
 # ── Domain functions ──────────────────────────────────────────────────────────
