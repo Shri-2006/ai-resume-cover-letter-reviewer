@@ -24,6 +24,9 @@ without re-uploading anything.
   layout and tab-separated formatting confuse the paragraph injection logic,
   resulting in misaligned or incomplete output. Cover letter generation is
   unaffected. A fix is planned.
+  ## Notes
+
+This project was built as a quick prototype to explore LLM-based document transformation and guardrail-constrained generation. It is primarily intended for personal use and experimentation.
 
 ---
 
