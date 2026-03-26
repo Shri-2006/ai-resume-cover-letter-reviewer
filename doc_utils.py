@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  doc_utils.py  –  No-placeholder template injection
+#  doc_utils.py  –  python-docx utilities
 # ─────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -8,6 +8,8 @@ from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
+
+# ── Load / save ───────────────────────────────────────────────────────────────
 
 def load_docx(file_like) -> Document:
     if isinstance(file_like, (io.BytesIO, io.RawIOBase, io.BufferedIOBase)):
@@ -27,81 +29,205 @@ def save_docx_to_bytes(doc: Document) -> bytes:
     return buf.getvalue()
 
 
+# ── Text extraction ───────────────────────────────────────────────────────────
+
 def extract_resume_text(doc: Document) -> str:
-    """Plain-text dump of a resume .docx (body + tables)."""
+    """Plain-text dump of a resume .docx (body paragraphs + table cells)."""
     lines = []
-    for para in doc.paragraphs:
-        t = para.text.strip()
+    for p in doc.paragraphs:
+        t = p.text.strip()
         if t:
             lines.append(t)
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
-                for para in cell.paragraphs:
-                    t = para.text.strip()
+                for p in cell.paragraphs:
+                    t = p.text.strip()
                     if t:
                         lines.append(t)
     return "\n".join(lines)
 
 
+# ── Template context (sent to the AI) ─────────────────────────────────────────
+
 def get_template_context(doc: Document) -> str:
-    """
-    Return the template as a numbered paragraph list for the AI prompt.
-    Example:  [0] Wolfie Seawolf
-              [1] Town, State | email ...
-              ...
-    The AI uses these exact indices in its JSON response.
-    """
+    """Return numbered paragraph list: [0] text, [1] text, ..."""
     return "\n".join(f"[{i}] {p.text}" for i, p in enumerate(doc.paragraphs))
 
 
+# ── AI-generated paragraph replacements ──────────────────────────────────────
+
 def apply_paragraph_replacements(doc: Document, replacements: dict) -> int:
     """
-    Apply {paragraph_index: new_text} replacements to *doc* in place.
-    Text may contain \\n to insert multiple lines at that position.
-    Works in descending index order so insertions don't shift later indices.
-    Returns the number of paragraphs touched.
+    Apply {paragraph_index: new_text} to *doc* in place.
+    Works in descending order so insertions don't shift later indices.
+    \\n in a value inserts multiple sibling paragraphs at that slot.
+    Returns number of paragraphs touched.
     """
     paragraphs = doc.paragraphs
     applied = 0
-
     sorted_items = sorted(
-        ((int(k), v) for k, v in replacements.items() if str(k).strip().lstrip("-").isdigit()),
+        ((int(k), v) for k, v in replacements.items()
+         if str(k).strip().lstrip("-").isdigit()),
         reverse=True,
     )
-
     for idx, new_text in sorted_items:
         if idx < 0 or idx >= len(paragraphs):
             continue
-
         para = paragraphs[idx]
         lines = new_text.split("\n")
         while lines and not lines[-1].strip():
             lines.pop()
-
         if not lines:
             _clear_para(para)
             applied += 1
             continue
-
         _set_para_text(para, lines[0])
         applied += 1
-
         anchor = para
         for extra in lines[1:]:
             new_elem = _clone_para(anchor, extra)
             anchor._element.addnext(new_elem)
-
     return applied
 
 
-# ── internal helpers ──────────────────────────────────────────────────────────
+# ── User info injection (name, contact, company, date, signature) ─────────────
 
-def _clear_para(para):
+def apply_user_info(doc: Document, user_info: dict) -> None:
+    """
+    Replace template placeholder text with the user's real details.
+    Uses text matching (not paragraph index) so it works with any template.
+
+    user_info keys (all optional):
+        name          – candidate's full name
+        location      – e.g. "New York, NY"
+        email         – e.g. "jane@email.com"
+        phone         – e.g. "(555) 123-4567"
+        linkedin      – e.g. "linkedin.com/in/janedoe"
+        company       – target company name
+        company_addr1 – company street address (optional)
+        company_addr2 – company city/state/zip (optional)
+        date          – letter date, e.g. "March 25, 2025"
+    """
+    name          = user_info.get("name", "").strip()
+    location      = user_info.get("location", "").strip()
+    email         = user_info.get("email", "").strip()
+    phone         = user_info.get("phone", "").strip()
+    linkedin      = user_info.get("linkedin", "").strip()
+    company       = user_info.get("company", "").strip()
+    company_addr1 = user_info.get("company_addr1", "").strip()
+    company_addr2 = user_info.get("company_addr2", "").strip()
+    date          = user_info.get("date", "").strip()
+
+    # Build contact line from provided fields
+    contact_parts = [p for p in [location, email, phone, linkedin] if p]
+    contact_line  = " | ".join(contact_parts) if contact_parts else ""
+
+    # Known placeholder strings present in the default Stony Brook templates
+    _NAME_PLACEHOLDERS = {"Wolfie Seawolf"}
+    _CONTACT_SIGNALS   = {
+        "professional_email@gmail.com",
+        "wolfie.seawolf@stonybrook.edu",
+        "(123) 456",
+        "(XXX) XXX",
+    }
+    _COMPANY_PLACEHOLDER    = "Company name"
+    _ADDR1_PLACEHOLDER      = "XXXX Employer Rd."
+    _ADDR2_PLACEHOLDER      = "New York, NY 11004"
+    _DATE_PLACEHOLDER       = "January 1, 2024"
+    _LOCATION_PLACEHOLDER   = "Town, State"
+
+    for para in doc.paragraphs:
+        full = "".join(r.text for r in para.runs)
+        stripped = full.strip()
+
+        # ── Candidate name (standalone line) ─────────────────────────────────
+        if name and stripped in _NAME_PLACEHOLDERS:
+            _set_para_text(para, name)
+            continue
+
+        # ── Contact info line ─────────────────────────────────────────────────
+        if contact_line and any(sig in full for sig in _CONTACT_SIGNALS):
+            # Cover letter contact line has the date crammed on the same paragraph;
+            # strip it off and add the user's date separately if supplied.
+            if date and _DATE_PLACEHOLDER in full:
+                _set_para_text(para, f"{contact_line}  {date}")
+            else:
+                _set_para_text(para, contact_line)
+            continue
+
+        # ── Location placeholder in resume header ─────────────────────────────
+        if location and _LOCATION_PLACEHOLDER in stripped:
+            _set_para_text(para, full.replace(_LOCATION_PLACEHOLDER, location))
+            continue
+
+        # ── Company name ──────────────────────────────────────────────────────
+        if company and stripped == _COMPANY_PLACEHOLDER:
+            _set_para_text(para, company)
+            continue
+
+        # ── Company address ───────────────────────────────────────────────────
+        if company_addr1 and stripped == _ADDR1_PLACEHOLDER:
+            _set_para_text(para, company_addr1)
+            continue
+        if company_addr2 and stripped == _ADDR2_PLACEHOLDER:
+            _set_para_text(para, company_addr2)
+            continue
+
+        # ── Standalone date line ──────────────────────────────────────────────
+        if date and stripped == _DATE_PLACEHOLDER:
+            _set_para_text(para, date)
+            continue
+
+
+# ── Document preview (human-readable, not raw index pairs) ───────────────────
+
+def build_document_preview(doc: Document) -> str:
+    """
+    Render the full document as clean plain text for display in the UI.
+    ALL-CAPS section headers get a visual separator above them.
+    """
+    lines = []
+    for para in doc.paragraphs:
+        text    = para.text
+        stripped = text.strip()
+
+        if not stripped:
+            lines.append("")
+            continue
+
+        # Section header detection: all-caps, at least 3 chars, no digits
+        if (stripped.isupper()
+                and len(stripped) >= 3
+                and not any(c.isdigit() for c in stripped)):
+            lines.append("")
+            lines.append("─" * 48)
+            lines.append(stripped)
+            lines.append("─" * 48)
+        else:
+            lines.append(text)
+
+    # Collapse runs of more than 2 blank lines
+    result, prev_blank = [], 0
+    for line in lines:
+        if not line.strip():
+            prev_blank += 1
+            if prev_blank <= 1:
+                result.append(line)
+        else:
+            prev_blank = 0
+            result.append(line)
+
+    return "\n".join(result).strip()
+
+
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _clear_para(para) -> None:
     for r in para.runs:
         r.text = ""
 
-def _set_para_text(para, text: str):
+def _set_para_text(para, text: str) -> None:
     if not para.runs:
         para.add_run(text)
         return

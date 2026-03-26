@@ -1,22 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  ai_utils.py  –  SAP AI Core direct REST API (no SDK model-name lookup)
-#
-#  Uses the same env vars as the user's working chatbot:
-#    SAP_AUTH_URL              – OAuth2 token endpoint
-#    SAP_CLIENT_ID             – OAuth2 client ID
-#    SAP_CLIENT_SECRET         – OAuth2 client secret
-#    SAP_AI_API_URL            – AI Core base URL (no trailing slash)
-#    RESOURCE_GROUP            – Resource group (usually "default")
-#    SAP_DEPLOYMENT_ID         – Default deployment ID to use
-#
-#  How it works:
-#    1. Fetch an OAuth2 bearer token from SAP_AUTH_URL
-#    2. POST to /v2/inference/deployments/{deployment_id}/v1/chat/completions
-#       with the token and AI-Resource-Group header
-#    3. Parse the OpenAI-compatible response
-#
-#  This is exactly how the working chatbot calls SAP AI Core — no SDK
-#  model-name-to-deployment resolution that was causing "No deployment found".
+#  ai_utils.py  –  SAP AI Core via Orchestration REST API
 # ─────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -24,12 +7,7 @@ import json, os, re, time
 import requests
 
 # ── Model catalogue ───────────────────────────────────────────────────────────
-# Display label → SAP model name hint (sent in the request body).
-# The actual routing is determined by the deployment ID, not this name.
-# This list is cosmetic / informational — all requests go through whichever
-# deployment ID is configured in SAP_DEPLOYMENT_ID.
 AVAILABLE_MODELS: dict[str, str] = {
-    # ── OpenAI ────────────────────────────────────────────────────────────────
     "GPT-5  (OpenAI)":                    "gpt-5",
     "GPT-5 Mini  (OpenAI)":               "gpt-5-mini",
     "GPT-5 Nano  (OpenAI)":               "gpt-5-nano",
@@ -43,7 +21,6 @@ AVAILABLE_MODELS: dict[str, str] = {
     "o3  (OpenAI)":                       "o3",
     "o3 Mini  (OpenAI)":                  "o3-mini",
     "o4 Mini  (OpenAI)":                  "o4-mini",
-    # ── Anthropic ─────────────────────────────────────────────────────────────
     "Claude 4.6 Sonnet  (Anthropic)":     "anthropic--claude-4.6-sonnet",
     "Claude 4.6 Opus  (Anthropic)":       "anthropic--claude-4.6-opus",
     "Claude 4.5 Sonnet  (Anthropic)":     "anthropic--claude-4.5-sonnet",
@@ -54,48 +31,36 @@ AVAILABLE_MODELS: dict[str, str] = {
     "Claude 3.7 Sonnet  (Anthropic)":     "anthropic--claude-3.7-sonnet",
     "Claude 3.5 Sonnet  (Anthropic)":     "anthropic--claude-3.5-sonnet",
     "Claude 3 Haiku  (Anthropic)":        "anthropic--claude-3-haiku",
-    # ── Google ────────────────────────────────────────────────────────────────
     "Gemini 3 Pro Preview  (Google)":     "gemini-3-pro-preview",
     "Gemini 2.5 Pro  (Google)":           "gemini-2.5-pro",
     "Gemini 2.5 Flash  (Google)":         "gemini-2.5-flash",
     "Gemini 2.5 Flash Lite  (Google)":    "gemini-2.5-flash-lite",
     "Gemini 2.0 Flash  (Google)":         "gemini-2.0-flash",
     "Gemini 2.0 Flash Lite  (Google)":    "gemini-2.0-flash-lite",
-    # ── Amazon ────────────────────────────────────────────────────────────────
     "Nova Premier  (Amazon)":             "amazon--nova-premier",
     "Nova Pro  (Amazon)":                 "amazon--nova-pro",
     "Nova Lite  (Amazon)":                "amazon--nova-lite",
     "Nova Micro  (Amazon)":               "amazon--nova-micro",
-    # ── Mistral AI ────────────────────────────────────────────────────────────
     "Mistral Large  (Mistral AI)":        "mistralai--mistral-large-instruct",
     "Mistral Medium  (Mistral AI)":       "mistralai--mistral-medium-instruct",
     "Mistral Small  (Mistral AI)":        "mistralai--mistral-small-instruct",
-    # ── Meta ──────────────────────────────────────────────────────────────────
     "Llama 3 70B  (Meta)":                "meta--llama3-70b-instruct",
-    # ── DeepSeek ──────────────────────────────────────────────────────────────
     "DeepSeek R1 0528  (DeepSeek)":       "deepseek-r1-0528",
     "DeepSeek V3.2  (DeepSeek)":          "deepseek-v3.2",
-    # ── Qwen ──────────────────────────────────────────────────────────────────
     "Qwen3 Max  (Alibaba)":               "qwen3-max",
     "Qwen3.5 Plus  (Alibaba)":            "qwen3.5-plus",
     "Qwen Turbo  (Alibaba)":              "qwen-turbo",
     "Qwen Flash  (Alibaba)":              "qwen-flash",
-    # ── Perplexity ────────────────────────────────────────────────────────────
     "Sonar Pro  (Perplexity)":            "sonar-pro",
     "Sonar  (Perplexity)":                "sonar",
     "Sonar Deep Research  (Perplexity)":  "sonar-deep-research",
-    # ── Cohere ────────────────────────────────────────────────────────────────
     "Command A Reasoning  (Cohere)":      "cohere--command-a-reasoning",
 }
 
-# ── Required env vars (matching the user's existing chatbot setup) ────────────
+# ── Credentials ───────────────────────────────────────────────────────────────
 _REQUIRED_VARS = [
-    "SAP_AUTH_URL",
-    "SAP_CLIENT_ID",
-    "SAP_CLIENT_SECRET",
-    "SAP_AI_API_URL",
-    "RESOURCE_GROUP",
-    "SAP_DEPLOYMENT_ID",
+    "SAP_AUTH_URL", "SAP_CLIENT_ID", "SAP_CLIENT_SECRET",
+    "SAP_AI_API_URL", "RESOURCE_GROUP", "SAP_DEPLOYMENT_ID",
 ]
 
 def validate_credentials() -> tuple[bool, list[str]]:
@@ -103,122 +68,94 @@ def validate_credentials() -> tuple[bool, list[str]]:
     return len(missing) == 0, missing
 
 
-# ── OAuth2 token cache (avoid fetching a new token on every single call) ──────
+# ── OAuth2 token cache ────────────────────────────────────────────────────────
 _token_cache: dict = {"token": None, "expires_at": 0.0}
 
 def _get_bearer_token() -> str:
-    """
-    Fetch (or return cached) OAuth2 bearer token from SAP_AUTH_URL.
-    Tokens are cached until 60 seconds before expiry.
-    """
     now = time.time()
     if _token_cache["token"] and now < _token_cache["expires_at"]:
         return _token_cache["token"]
-
-    auth_url     = os.environ["SAP_AUTH_URL"]
-    client_id    = os.environ["SAP_CLIENT_ID"]
-    client_secret = os.environ["SAP_CLIENT_SECRET"]
-
-    # Ensure the token URL ends with /oauth/token
-    if not auth_url.rstrip("/").endswith("/oauth/token"):
-        auth_url = auth_url.rstrip("/") + "/oauth/token"
-
+    auth_url      = os.environ["SAP_AUTH_URL"].rstrip("/")
+    if not auth_url.endswith("/oauth/token"):
+        auth_url += "/oauth/token"
     resp = requests.post(
         auth_url,
         data={"grant_type": "client_credentials"},
-        auth=(client_id, client_secret),
+        auth=(os.environ["SAP_CLIENT_ID"], os.environ["SAP_CLIENT_SECRET"]),
         timeout=30,
     )
     resp.raise_for_status()
     data = resp.json()
-
-    token = data["access_token"]
-    expires_in = int(data.get("expires_in", 3600))
-    _token_cache["token"] = token
-    _token_cache["expires_at"] = now + expires_in - 60  # 60s safety buffer
-
-    return token
+    _token_cache["token"] = data["access_token"]
+    _token_cache["expires_at"] = now + int(data.get("expires_in", 3600)) - 60
+    return _token_cache["token"]
 
 
-# ── Honesty guardrails ────────────────────────────────────────────────────────
+# ── Honesty guardrails (hardcoded) ────────────────────────────────────────────
 _RESUME_SYSTEM = """
 You are an ethical resume tailor. You are strictly forbidden from inventing,
 assuming, or adding any skills, metrics, job titles, degrees, or experiences
-not explicitly present in the Base Resume provided by the user.
+not explicitly present in the Base Resume.
 
-Your job is to rewrite and reorder the content of the provided resume TEMPLATE
-so it targets the given Job Description — using ONLY facts from the Base Resume.
+Rewrite the resume TEMPLATE content to target the Job Description using ONLY
+facts from the Base Resume.
 
-OUTPUT FORMAT — you must return ONLY a valid JSON object, no markdown, no explanation:
+OUTPUT FORMAT — return ONLY a raw JSON object, nothing else:
 {
   "replacements": {
-    "PARAGRAPH_INDEX": "replacement text",
     "PARAGRAPH_INDEX": "replacement text"
   }
 }
 
-Rules for which paragraph indices to include:
-- Replace experience company/org name lines with REAL entries from the base resume.
-- Replace position/role name lines with REAL roles from the base resume.
-- Replace date lines with REAL dates from the base resume.
-- Replace all "Skill based bullet" lines and sample bullet text with REAL, tailored bullets.
-- Replace the skills section lines (Computer:, Language:, Certifications:) with real values.
-- For cover letters: replace the Section One/Two/Three body paragraphs only.
-- Do NOT replace: the candidate name, contact info line, section headers (EDUCATION,
-  PROFESSIONAL EXPERIENCE, etc.), or blank spacer paragraphs.
-- If the base resume has fewer jobs than template slots, set unused slots to empty string "".
-- Never add skills or experience the candidate does not have.
-- Use \\n inside a string value to represent multiple bullet lines for one slot.
+Rules:
+- Replace: company/org names, position names, dates, bullet points, skills lines.
+- Do NOT replace: candidate name (index 0), contact info (index 1), section
+  headers (EDUCATION, PROFESSIONAL EXPERIENCE, etc.), blank spacer paragraphs.
+- If base resume has fewer jobs than template slots, set unused slots to "".
+- Never invent experience or skills the candidate does not have.
+- Use \\n for multiple bullet lines within one paragraph slot.
 """.strip()
 
 _COVER_LETTER_SYSTEM = """
 You are an ethical cover letter writer. Use ONLY facts from the Base Resume.
-Do not invent anecdotes, fabricate metrics, or use generic filler openings.
+Do not invent anecdotes, fabricate metrics, or use generic AI filler.
 
-OUTPUT FORMAT — return ONLY a valid JSON object, no markdown, no explanation:
+OUTPUT FORMAT — return ONLY a raw JSON object, nothing else:
 {
   "replacements": {
     "PARAGRAPH_INDEX": "paragraph text"
   }
 }
 
-Write exactly 3 body paragraphs (one per Section slot):
-- Paragraph 1: Hook — why this specific role/company excites the candidate,
-  grounded in something real from their background.
-- Paragraph 2: Evidence — 2-3 concrete examples from the Base Resume that
-  directly match the job requirements.
+Replace only the body paragraph slots (Section One, Section Two, Section Three):
+- Paragraph 1: Hook — genuine reason this role excites the candidate based on
+  their real background.
+- Paragraph 2: Evidence — 2-3 concrete examples from the Base Resume that match
+  the job requirements.
 - Paragraph 3: Close — confident, professional call to action.
 
-Do NOT include salutation or sign-off — those are already in the template.
+Do NOT replace: name, contact info, company address, salutation, or sign-off.
 """.strip()
 
 
-# ── Core API call ─────────────────────────────────────────────────────────────
+# ── Core API call (temperature-free) ─────────────────────────────────────────
 def call_model(
     model_name: str,
     system_prompt: str,
     user_prompt: str,
     max_tokens: int = 3000,
-    temperature: float = 0.2,
 ) -> str:
     """
-    Call SAP AI Core via the Orchestration service endpoint.
-    
-    The user's chatbot uses SAP_ORCHESTRATION_DEPLOYMENT_ID which means it
-    targets the orchestration service, not the raw model inference endpoint.
-    
-    Orchestration endpoint:
-      POST {SAP_AI_API_URL}/v2/inference/deployments/{id}/completion
-    
-    This is different from the standard OpenAI-compatible endpoint
-      POST .../v1/chat/completions
-    which 404s against orchestration deployments.
+    Call SAP AI Core via the Orchestration endpoint.
+    Temperature is intentionally omitted — it is unsupported by GPT-5 and
+    o-series models, and the system prompt provides sufficient behavioral
+    guidance without it.
     """
     ok, missing = validate_credentials()
     if not ok:
         raise RuntimeError(
-            f"Missing environment variables: {', '.join(missing)}\n\n"
-            f"Add these to your Streamlit Secrets (Settings → Secrets)."
+            f"Missing environment variables: {', '.join(missing)}\n"
+            "Add them to Streamlit Settings → Secrets."
         )
 
     token          = _get_bearer_token()
@@ -226,26 +163,18 @@ def call_model(
     deployment_id  = os.environ["SAP_DEPLOYMENT_ID"]
     resource_group = os.environ["RESOURCE_GROUP"]
 
-    # Orchestration service endpoint — this is what works with deployment IDs
-    # created via the SAP AI Core Orchestration scenario.
     url = f"{base_url}/v2/inference/deployments/{deployment_id}/completion"
-
     headers = {
         "Authorization": f"Bearer {token}",
         "AI-Resource-Group": resource_group,
         "Content-Type": "application/json",
     }
-
-    # Orchestration request body format (different from OpenAI chat completions)
     body = {
         "orchestration_config": {
             "module_configurations": {
                 "llm_module_config": {
                     "model_name": model_name,
-                    "model_params": {
-                        "max_tokens": max_tokens,
-                        "temperature": temperature,
-                    },
+                    "model_params": {"max_tokens": max_tokens},
                 },
                 "templating_module_config": {
                     "template": [
@@ -259,60 +188,72 @@ def call_model(
 
     resp = requests.post(url, headers=headers, json=body, timeout=120)
 
+    # Fallback to OpenAI-compatible endpoint for non-orchestration deployments
     if resp.status_code == 404:
-        # Deployment might actually be a direct model deployment (not orchestration).
-        # Fall back to the standard OpenAI-compatible endpoint.
-        url_fallback = (
-            f"{base_url}/v2/inference/deployments/{deployment_id}/v1/chat/completions"
-        )
-        body_fallback = {
+        url_fb = f"{base_url}/v2/inference/deployments/{deployment_id}/v1/chat/completions"
+        body_fb = {
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": user_prompt},
             ],
             "max_tokens": max_tokens,
-            "temperature": temperature,
         }
-        resp = requests.post(url_fallback, headers=headers, json=body_fallback, timeout=120)
+        resp = requests.post(url_fb, headers=headers, json=body_fb, timeout=120)
 
     if not resp.ok:
-        raise RuntimeError(
-            f"SAP AI Core API error {resp.status_code}:\n{resp.text[:600]}"
-        )
+        raise RuntimeError(f"SAP AI Core API error {resp.status_code}:\n{resp.text[:600]}")
 
     data = resp.json()
-
-    # Orchestration response shape:  data["orchestration_result"]["choices"][0]["message"]["content"]
-    # Standard chat completions shape: data["choices"][0]["message"]["content"]
     try:
-        return (
-            data.get("orchestration_result", data)
-            ["choices"][0]["message"]["content"].strip()
-        )
+        return data.get("orchestration_result", data)["choices"][0]["message"]["content"].strip()
     except (KeyError, IndexError, TypeError):
-        # Last resort — return the raw JSON so the user can see what came back
         raise RuntimeError(
-            f"Unexpected response structure from SAP AI Core:\n{json.dumps(data, indent=2)[:600]}"
+            f"Unexpected SAP response structure:\n{json.dumps(data, indent=2)[:600]}"
         )
 
 
-# ── JSON parsing helper ───────────────────────────────────────────────────────
+# ── JSON parsing ──────────────────────────────────────────────────────────────
 def parse_replacements(raw: str) -> dict[str, str]:
-    raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
+    """Extract the replacements dict from the AI response, handling common noise."""
+    cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
     try:
-        data = json.loads(raw)
+        data = json.loads(cleaned)
         if isinstance(data, dict):
             return data.get("replacements", data)
     except json.JSONDecodeError:
         pass
-    match = re.search(r'\{.*\}', raw, re.DOTALL)
+    match = re.search(r'\{.*\}', cleaned, re.DOTALL)
     if match:
         try:
             data = json.loads(match.group())
             return data.get("replacements", data)
         except json.JSONDecodeError:
             pass
-    raise ValueError(f"Could not parse JSON from AI response:\n{raw[:500]}")
+    raise ValueError(f"Could not parse AI response as JSON:\n{raw[:500]}")
+
+
+def _call_with_retry(
+    model_name: str,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int,
+) -> dict[str, str]:
+    """
+    Call the model and parse JSON.  On parse failure, retry once with an
+    explicit JSON-only enforcement suffix added to the prompt.
+    """
+    raw = call_model(model_name, system_prompt, user_prompt, max_tokens)
+    try:
+        return parse_replacements(raw)
+    except ValueError:
+        retry_prompt = (
+            user_prompt
+            + "\n\n⚠️ IMPORTANT: Your previous response could not be parsed as JSON. "
+            "You MUST return ONLY a raw JSON object — start with { and end with }. "
+            "Absolutely no text before or after it. No markdown. No backticks."
+        )
+        raw2 = call_model(model_name, system_prompt, retry_prompt, max_tokens)
+        return parse_replacements(raw2)  # raises ValueError if still broken
 
 
 # ── Domain functions ──────────────────────────────────────────────────────────
@@ -332,8 +273,7 @@ def tailor_resume(
 {job_description}
 
 Return the JSON replacements object as instructed."""
-    raw = call_model(model_name, _RESUME_SYSTEM, prompt, max_tokens=3000, temperature=0.2)
-    return parse_replacements(raw)
+    return _call_with_retry(model_name, _RESUME_SYSTEM, prompt, max_tokens=3000)
 
 
 def generate_cover_letter(
@@ -352,5 +292,4 @@ def generate_cover_letter(
 {job_description}
 
 Return the JSON replacements object as instructed."""
-    raw = call_model(model_name, _COVER_LETTER_SYSTEM, prompt, max_tokens=1200, temperature=0.3)
-    return parse_replacements(raw)
+    return _call_with_retry(model_name, _COVER_LETTER_SYSTEM, prompt, max_tokens=1200)
