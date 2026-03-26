@@ -265,6 +265,12 @@ letters to minimise sampling randomness and further suppress hallucination.
 
 ---
 
+## Live Demo
+
+🚀 **[Try it here](https://ai-resume-cover-letter-reviewer-czvubpwu5qzozhypti4thk.streamlit.app/)**
+
+---
+
 ## Deploying to Streamlit Community Cloud (free)
 
 1. Push the full repo to GitHub — make sure `.env` is in `.gitignore`
