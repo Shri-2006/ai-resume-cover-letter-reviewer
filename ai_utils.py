@@ -13,13 +13,63 @@ except ImportError:
 
 # ── Model catalogue ───────────────────────────────────────────────────────────
 AVAILABLE_MODELS: dict[str, str] = {
-    "GPT-4o  (OpenAI)":               "gpt-4o",
-    "GPT-4o Mini  (OpenAI)":          "gpt-4o-mini",
-    "Claude 3.5 Sonnet  (Anthropic)": "claude-3-5-sonnet",
-    "Claude 3 Opus  (Anthropic)":     "claude-3-opus",
-    "Gemini 1.5 Pro  (Google)":       "gemini-1.5-pro",
-    "Mistral Large  (Mistral AI)":    "mistral-large-instruct",
-    "Qwen 2.5 72B  (Alibaba)":        "qwen2-5-72b-instruct",
+    # ── OpenAI ────────────────────────────────────────────────────────────────
+    "GPT-5  (OpenAI)":                    "gpt-5",
+    "GPT-5 Mini  (OpenAI)":               "gpt-5-mini",
+    "GPT-5 Nano  (OpenAI)":               "gpt-5-nano",
+    "GPT-5.2  (OpenAI)":                  "gpt-5.2",
+    "GPT-4.1  (OpenAI)":                  "gpt-4.1",
+    "GPT-4.1 Mini  (OpenAI)":             "gpt-4.1-mini",
+    "GPT-4.1 Nano  (OpenAI)":             "gpt-4.1-nano",
+    "GPT-4o  (OpenAI)":                   "gpt-4o",
+    "GPT-4o Mini  (OpenAI)":              "gpt-4o-mini",
+    "o1  (OpenAI)":                       "o1",
+    "o3  (OpenAI)":                       "o3",
+    "o3 Mini  (OpenAI)":                  "o3-mini",
+    "o4 Mini  (OpenAI)":                  "o4-mini",
+    # ── Anthropic ─────────────────────────────────────────────────────────────
+    "Claude 4.6 Sonnet  (Anthropic)":     "anthropic--claude-4.6-sonnet",
+    "Claude 4.6 Opus  (Anthropic)":       "anthropic--claude-4.6-opus",
+    "Claude 4.5 Sonnet  (Anthropic)":     "anthropic--claude-4.5-sonnet",
+    "Claude 4.5 Opus  (Anthropic)":       "anthropic--claude-4.5-opus",
+    "Claude 4.5 Haiku  (Anthropic)":      "anthropic--claude-4.5-haiku",
+    "Claude 4 Sonnet  (Anthropic)":       "anthropic--claude-4-sonnet",
+    "Claude 4 Opus  (Anthropic)":         "anthropic--claude-4-opus",
+    "Claude 3.7 Sonnet  (Anthropic)":     "anthropic--claude-3.7-sonnet",
+    "Claude 3.5 Sonnet  (Anthropic)":     "anthropic--claude-3.5-sonnet",
+    "Claude 3 Haiku  (Anthropic)":        "anthropic--claude-3-haiku",
+    # ── Google ────────────────────────────────────────────────────────────────
+    "Gemini 3 Pro Preview  (Google)":     "gemini-3-pro-preview",
+    "Gemini 2.5 Pro  (Google)":           "gemini-2.5-pro",
+    "Gemini 2.5 Flash  (Google)":         "gemini-2.5-flash",
+    "Gemini 2.5 Flash Lite  (Google)":    "gemini-2.5-flash-lite",
+    "Gemini 2.0 Flash  (Google)":         "gemini-2.0-flash",
+    "Gemini 2.0 Flash Lite  (Google)":    "gemini-2.0-flash-lite",
+    # ── Amazon ────────────────────────────────────────────────────────────────
+    "Nova Premier  (Amazon)":             "amazon--nova-premier",
+    "Nova Pro  (Amazon)":                 "amazon--nova-pro",
+    "Nova Lite  (Amazon)":                "amazon--nova-lite",
+    "Nova Micro  (Amazon)":               "amazon--nova-micro",
+    # ── Mistral AI ────────────────────────────────────────────────────────────
+    "Mistral Large  (Mistral AI)":        "mistralai--mistral-large-instruct",
+    "Mistral Medium  (Mistral AI)":       "mistralai--mistral-medium-instruct",
+    "Mistral Small  (Mistral AI)":        "mistralai--mistral-small-instruct",
+    # ── Meta ──────────────────────────────────────────────────────────────────
+    "Llama 3 70B  (Meta)":                "meta--llama3-70b-instruct",
+    # ── DeepSeek ──────────────────────────────────────────────────────────────
+    "DeepSeek R1 0528  (DeepSeek)":       "deepseek-r1-0528",
+    "DeepSeek V3.2  (DeepSeek)":          "deepseek-v3.2",
+    # ── Qwen ──────────────────────────────────────────────────────────────────
+    "Qwen3 Max  (Alibaba)":               "qwen3-max",
+    "Qwen3.5 Plus  (Alibaba)":            "qwen3.5-plus",
+    "Qwen Turbo  (Alibaba)":              "qwen-turbo",
+    "Qwen Flash  (Alibaba)":              "qwen-flash",
+    # ── Perplexity ────────────────────────────────────────────────────────────
+    "Sonar Pro  (Perplexity)":            "sonar-pro",
+    "Sonar  (Perplexity)":                "sonar",
+    "Sonar Deep Research  (Perplexity)":  "sonar-deep-research",
+    # ── Cohere ────────────────────────────────────────────────────────────────
+    "Command A Reasoning  (Cohere)":      "cohere--command-a-reasoning",
 }
 
 # ── Credential check ─────────────────────────────────────────────────────────
