@@ -24,11 +24,9 @@ without re-uploading anything.
   layout and tab-separated formatting confuse the paragraph injection logic,
   resulting in misaligned or incomplete output. Cover letter generation is
   unaffected. A fix is planned.
-  ## Notes
-
-This project was built as a quick prototype to explore LLM-based document transformation and guardrail-constrained generation. It is primarily intended for personal use and experimentation.
 
 ---
+This project was built as a quick prototype to explore LLM-based document transformation and guardrail-constrained generation. It is primarily intended for personal use and experimentation.
 
 ## Live Demo
 
@@ -237,12 +235,12 @@ headers, education section, or cover letter salutation and sign-off.
 
 ## Available Models (47 total)
 
-The default is **GPT-5.2**. The full list is available in the sidebar dropdown:
+The default is **Claude 4.6 Opus**. The full list is available in the sidebar dropdown:
 
 | Provider | Models |
 |---|---|
-| **OpenAI** | GPT-5.2 ⭐, GPT-5, GPT-5 Mini, GPT-5 Nano, GPT-4.1, GPT-4.1 Mini, GPT-4.1 Nano, GPT-4o, GPT-4o Mini, o1, o3, o3-mini, o4-mini |
-| **Anthropic** | Claude 4.6 Sonnet/Opus, Claude 4.5 Sonnet/Opus/Haiku, Claude 4 Sonnet/Opus, Claude 3.7 Sonnet, Claude 3.5 Sonnet, Claude 3 Haiku |
+| **Anthropic** | Claude 4.6 Opus ⭐, Claude 4.6 Sonnet, Claude 4.5 Sonnet/Opus/Haiku, Claude 4 Sonnet/Opus, Claude 3.7 Sonnet, Claude 3.5 Sonnet, Claude 3 Haiku |
+| **OpenAI** | GPT-5.2, GPT-5, GPT-5 Mini, GPT-5 Nano, GPT-4.1, GPT-4.1 Mini, GPT-4.1 Nano, GPT-4o, GPT-4o Mini, o1, o3, o3-mini, o4-mini |
 | **Google** | Gemini 3 Pro Preview, Gemini 2.5 Pro/Flash/Flash-Lite, Gemini 2.0 Flash/Flash-Lite |
 | **Amazon** | Nova Premier, Nova Pro, Nova Lite, Nova Micro |
 | **Mistral AI** | Mistral Large, Mistral Medium, Mistral Small |
@@ -252,8 +250,8 @@ The default is **GPT-5.2**. The full list is available in the sidebar dropdown:
 | **Perplexity** | Sonar Pro, Sonar, Sonar Deep Research |
 | **Cohere** | Command A Reasoning |
 
-**Recommended for best results:** GPT-5.2, GPT-4.1, Claude 3.5 Sonnet, or
-Gemini 2.5 Flash — fast, instruction-following, and reliable JSON output.
+**Recommended for best results:** Claude 4.6 Opus (default), GPT-5.2, GPT-4.1,
+or Gemini 2.5 Flash — reliable JSON output for both resume and cover letter generation.
 
 **Notes on specific models:**
 - **Temperature is not sent** for any model — it caused errors on GPT-5 and
