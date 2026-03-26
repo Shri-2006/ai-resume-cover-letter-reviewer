@@ -240,14 +240,14 @@ def call_model(
     body = {
         "orchestration_config": {
             "module_configurations": {
-                "llm": {
+                "llm_module_config": {
                     "model_name": model_name,
                     "model_params": {
                         "max_tokens": max_tokens,
                         "temperature": temperature,
                     },
                 },
-                "templating": {
+                "templating_module_config": {
                     "template": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user",   "content": user_prompt},
