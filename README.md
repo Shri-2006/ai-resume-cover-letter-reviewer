@@ -16,7 +16,16 @@ generate tailored resumes and cover letters for as many jobs as you want
 without re-uploading anything.
 
 ---
-Known Problems: It is horrible at creating resumes based on the template I have provided. 
+
+## Known Problems
+
+- **Resume template output quality** — The AI performs poorly when tailoring
+  resumes using the default Stony Brook template. The structured multi-column
+  layout and tab-separated formatting confuse the paragraph injection logic,
+  resulting in misaligned or incomplete output. Cover letter generation is
+  unaffected. A fix is planned.
+
+---
 
 ## Live Demo
 
