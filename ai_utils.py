@@ -9,8 +9,9 @@ import requests
 # ── Model catalogue  (GPT-5.2 is the default — listed first) ─────────────────
 AVAILABLE_MODELS: dict[str, str] = {
     # Default
-    "GPT-5.2  (OpenAI)":                  "gpt-5.2",
+    "Claude 4.6 Opus  (Anthropic)":       "anthropic--claude-4.6-opus",
     # OpenAI
+    "GPT-5.2  (OpenAI)":                  "gpt-5.2",
     "GPT-5  (OpenAI)":                    "gpt-5",
     "GPT-5 Mini  (OpenAI)":               "gpt-5-mini",
     "GPT-5 Nano  (OpenAI)":               "gpt-5-nano",
@@ -25,7 +26,6 @@ AVAILABLE_MODELS: dict[str, str] = {
     "o4 Mini  (OpenAI)":                  "o4-mini",
     # Anthropic
     "Claude 4.6 Sonnet  (Anthropic)":     "anthropic--claude-4.6-sonnet",
-    "Claude 4.6 Opus  (Anthropic)":       "anthropic--claude-4.6-opus",
     "Claude 4.5 Sonnet  (Anthropic)":     "anthropic--claude-4.5-sonnet",
     "Claude 4.5 Opus  (Anthropic)":       "anthropic--claude-4.5-opus",
     "Claude 4.5 Haiku  (Anthropic)":      "anthropic--claude-4.5-haiku",
