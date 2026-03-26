@@ -118,13 +118,39 @@ OUTPUT FORMAT — return ONLY a raw JSON object, nothing else:
   }
 }
 
-Rules:
-- Replace: company/org names, position names, dates, bullet points, skills lines.
-- Do NOT replace: candidate name (index 0), contact info (index 1), section
-  headers (EDUCATION, PROFESSIONAL EXPERIENCE, etc.), blank spacer paragraphs.
-- If base resume has fewer jobs than template slots, set unused slots to "".
-- Never invent experience or skills the candidate does not have.
-- Use \\n for multiple bullet lines within one paragraph slot.
+CRITICAL RULES — read carefully:
+
+1. TAB-ALIGNED LINES: Lines marked "→TAB→" in the template are two-column
+   right-aligned using a tab stop. You MUST return these as "LEFT TEXT\tRIGHT TEXT"
+   using a literal \\t (JSON tab escape) to separate left and right content.
+   Example — if the template shows:
+     [11] Organization/Company Name  →TAB→  Town, State  ← TAB-ALIGNED
+   Return: "11": "Acme Corp\\tNew York, NY"
+   NEVER return: "11": "Acme Corp, New York, NY"  (comma instead of tab = wrong)
+   NEVER return: "11": "Acme Corp  New York, NY"  (spaces instead of tab = wrong)
+
+2. ENTRY GROUPING: Experience and leadership entries each span several
+   consecutive paragraphs. A typical group is:
+     [N]   Company Name\\tLocation     ← TAB-ALIGNED
+     [N+1] Job Title\\tDates           ← TAB-ALIGNED
+     [N+2] Bullet point 1
+     [N+3] Bullet point 2
+     [N+4] Bullet point 3
+   Replace ALL paragraphs in a group together. Do not mix content from
+   different jobs across different groups.
+
+3. UNUSED SLOTS: If the base resume has fewer jobs than the template provides
+   slots for, set ALL paragraphs of the unused slot to "" (empty string).
+
+4. DO NOT REPLACE: lines labelled "SECTION HEADER" or "BLANK SPACER",
+   the candidate name (index 0), or the contact info line (index 1).
+
+5. BULLET FORMAT: Bullets should be concise, action-verb-led sentences.
+   Use \\n to provide multiple bullets within a single paragraph slot only
+   if the template has fewer bullet lines than you need — prefer using the
+   individual existing bullet paragraph indices.
+
+6. Never invent experience or skills the candidate does not have.
 """.strip()
 
 _COVER_LETTER_SYSTEM = """

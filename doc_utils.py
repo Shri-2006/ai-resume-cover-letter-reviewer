@@ -51,8 +51,46 @@ def extract_resume_text(doc: Document) -> str:
 # ── Template context (sent to the AI) ─────────────────────────────────────────
 
 def get_template_context(doc: Document) -> str:
-    """Return numbered paragraph list: [0] text, [1] text, ..."""
-    return "\n".join(f"[{i}] {p.text}" for i, p in enumerate(doc.paragraphs))
+    """
+    Return a richly-annotated paragraph list for the AI prompt.
+
+    Tab-separated lines (used for right-aligned two-column layout like
+    "Company Name  →TAB→  Location") are explicitly marked so the AI
+    knows to preserve the tab separator in its replacement values.
+
+    Section headers and blank spacers are labelled so the AI knows not
+    to replace them.
+    """
+    lines = []
+    paragraphs = doc.paragraphs
+
+    # Detect section headers: ALL-CAPS, no digits, 3+ chars
+    def _is_header(text: str) -> bool:
+        t = text.strip()
+        return bool(t) and t.isupper() and len(t) >= 3 and not any(c.isdigit() for c in t)
+
+    for i, para in enumerate(paragraphs):
+        text = para.text
+
+        if not text.strip():
+            lines.append(f"[{i}]  ← BLANK SPACER — do not replace")
+            continue
+
+        if _is_header(text):
+            lines.append(f"[{i}] {text}  ← SECTION HEADER — do not replace")
+            continue
+
+        if '\t' in text:
+            left, _, right = text.partition('\t')
+            lines.append(
+                f"[{i}] {left.strip()}  →TAB→  {right.strip()}"
+                f'  ← TAB-ALIGNED: return as "left text\\tright text"'
+            )
+            continue
+
+        lines.append(f"[{i}] {text}")
+
+    return "\n".join(lines)
 
 
 # ── AI-generated paragraph replacements ──────────────────────────────────────
@@ -229,9 +267,37 @@ def _clear_para(para) -> None:
         r.text = ""
 
 def _set_para_text(para, text: str) -> None:
+    """
+    Set the visible text of *para* to *text*, preserving run-level formatting.
+
+    Special handling for tab-separated paragraphs (e.g. "Company\tLocation"):
+    the tab character is preserved in the correct run so the Word tab-stop
+    right-alignment continues to work.
+    """
     if not para.runs:
         para.add_run(text)
         return
+
+    if '\t' in text:
+        left, _, right = text.partition('\t')
+
+        # Find the run that currently owns the tab character
+        tab_run_idx = next(
+            (i for i, r in enumerate(para.runs) if '\t' in r.text),
+            None,
+        )
+
+        if tab_run_idx is not None and tab_run_idx > 0:
+            # Standard two-part layout: run[0] = left content, tab-run = \t + right
+            para.runs[0].text = left
+            for k in range(1, tab_run_idx):
+                para.runs[k].text = ""
+            para.runs[tab_run_idx].text = '\t' + right
+            for k in range(tab_run_idx + 1, len(para.runs)):
+                para.runs[k].text = ""
+            return
+
+    # Default: everything in run[0], silence the rest
     para.runs[0].text = text
     for r in para.runs[1:]:
         r.text = ""
