@@ -1,39 +1,49 @@
 # 📄 AI Resume Tailor & Cover Letter Generator
 
-An AI-powered Streamlit web application that tailors your resume and writes a
-cover letter for any job posting — using **SAP AI Core** as the LLM backend
-and **python-docx** for template injection, with a hardcoded **Honesty Guardrail**
-that prevents the AI from fabricating any skills or experience.
+An AI-powered Streamlit web application that tailors your resume and writes
+cover letters for any job posting — using **SAP AI Core** as the LLM backend
+and **python-docx** for template injection, with a hardcoded **Honesty
+Guardrail** that prevents the AI from fabricating any skills or experience.
 
-**No template modifications needed.** Upload any `.docx` resume or cover letter
-template as-is. The AI reads the document structure and fills in the right
-paragraphs automatically. Built-in Stony Brook University templates are bundled
-as defaults so the app works immediately with no uploads required.
+**No template modifications needed.** Upload any `.docx` resume or cover
+letter template as-is. The AI reads the document structure and fills in the
+right paragraphs automatically. Built-in Stony Brook University templates are
+bundled as defaults so the app works immediately with no template uploads
+required.
+
+**Multiple job applications per session.** Fill in your details once and
+generate tailored resumes and cover letters for as many jobs as you want
+without re-uploading anything.
+
+---
+
+## Live Demo
+
+🚀 **[Try it here](https://ai-resume-cover-letter-reviewer-czvubpwu5qzozhypti4thk.streamlit.app/)**
 
 ---
 
 ## Project Structure
 
 ```
-├── app.py                          # Streamlit UI — main entry point
-├── ai_utils.py                     # SAP AI Core SDK calls + guardrail prompts
-├── doc_utils.py                    # python-docx parsing & paragraph injection
-├── requirements.txt                # Python dependencies
-├── runtime.txt                     # Pins Python 3.12 for Streamlit Cloud
-├── .env.example                    # Credential template (copy to .env)
-├── README.md                       # This file
+├── app.py                                   # Streamlit UI — main entry point
+├── ai_utils.py                              # SAP AI Core REST calls + guardrail prompts
+├── doc_utils.py                             # python-docx parsing & injection utilities
+├── requirements.txt                         # Python dependencies
+├── runtime.txt                              # Pins Python 3.12 for Streamlit Cloud
+├── .env.example                             # Credential template (copy to .env)
+├── README.md                                # This file
 └── templates/
-    ├── default_resume_template.docx       # Built-in fallback resume template
-    └── default_cover_letter_template.docx # Built-in fallback cover letter template
+    ├── default_resume_template.docx         # Built-in Stony Brook resume template
+    └── default_cover_letter_template.docx   # Built-in Stony Brook cover letter template
 ```
 
 ---
 
 ## How It Works
 
-The app takes a **no-placeholder** approach. Instead of requiring you to embed
-special tokens in your template, it sends the AI a numbered map of every
-paragraph in the document:
+The app uses a **no-placeholder** approach. Instead of requiring special tokens
+in your template, it sends the AI a numbered map of every paragraph:
 
 ```
 [0]  Wolfie Seawolf
@@ -60,17 +70,13 @@ returns a JSON object specifying exactly which paragraphs to rewrite:
 }
 ```
 
-The app applies those replacements surgically — untouched paragraphs (your name,
-section headers, education, formatting) are never modified.
+The app applies those changes surgically — your name, section headers,
+education, and all formatting are left untouched. After the AI pass, your
+personal details (name, contact info, company, date, signature) are injected
+via a second text-matching pass.
 
-```
-Base Resume (.docx)  ──┐
-                        ├──► SAP AI Core LLM ──► JSON replacements ──► Modified template (.docx)
-Job Description  ───────┘         │
-                                  │ Honesty Guardrail
-Template (.docx) ──► paragraph    │ (hardcoded, always on)
-                     index map ───┘
-```
+If the AI returns malformed JSON, the app **automatically retries once** with
+a stricter JSON-only prompt before surfacing an error.
 
 ---
 
@@ -80,7 +86,7 @@ Template (.docx) ──► paragraph    │ (hardcoded, always on)
 |---|---|
 | Python 3.12 | 3.13 and 3.14 break `pydantic-core` on Streamlit Cloud |
 | SAP BTP Account | Free tier works |
-| SAP AI Core service instance | With at least one LLM deployment active |
+| SAP AI Core service instance | Orchestration scenario with at least one deployment |
 | SAP AI Core service key | Download from BTP Cockpit |
 
 ---
@@ -115,14 +121,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. Configure SAP AI Core credentials
+### 4. Configure credentials
 
 ```bash
 cp .env.example .env
 ```
 
-These are the **same variable names** your existing SAP chatbot uses — copy the
-values directly from your chatbot's environment:
+These are the **same variable names** as your existing SAP AI Core chatbot.
+Copy the values directly from your chatbot's environment:
 
 ```env
 SAP_AUTH_URL=https://yoursubdomain.authentication.eu10.hana.ondemand.com/oauth/token
@@ -133,7 +139,7 @@ RESOURCE_GROUP=default
 SAP_DEPLOYMENT_ID=dxxxxxxxxxxxxxxx
 ```
 
-`SAP_DEPLOYMENT_ID` is the one new variable — grab it from
+`SAP_DEPLOYMENT_ID` is the only new variable — grab it from
 **SAP AI Launchpad → ML Operations → Deployments** and copy the ID of any
 RUNNING deployment (the same one your chatbot uses works fine).
 
@@ -149,51 +155,80 @@ Open http://localhost:8501 in your browser.
 
 ## Using the App
 
-### Minimum required uploads
-
-| Field | Required? | Default if skipped |
-|---|---|---|
-| Base Resume (.docx) | ✅ Always required | — |
-| Resume Template (.docx) | Optional | Stony Brook template |
-| Cover Letter Template (.docx) | Optional | Stony Brook template |
-
-The app ships with built-in Stony Brook University resume and cover letter
-templates. You only need to upload your own templates if you want a different
-layout or design. The sidebar will show **"✅ Using the built-in Stony Brook
-template"** when the default is active.
-
 ### Workflow
 
-1. Upload your **base resume** (your master resume with all your experience)
-2. Optionally upload custom **.docx templates** — or use the built-in defaults
-3. Paste the **job description** you're targeting
-4. Select a **model** from the sidebar
-5. Click **✨ Tailor My Resume** and/or **✨ Generate Cover Letter**
-6. Preview the AI-generated content, then download the populated `.docx`
+| Step | What to do |
+|---|---|
+| **Step 1** | Upload your base resume (.docx). Optionally upload custom templates. |
+| **Step 2** | Fill in your personal details — applied to every job you generate. |
+| **Step 3** | Add one card per job. Paste each job description, click generate. |
+
+### Step 1 — Documents
+
+| Upload | Required? | Default if skipped |
+|---|---|---|
+| Base Resume (.docx) | ✅ Always required | — |
+| Resume Template (.docx) | Optional | Built-in Stony Brook template |
+| Cover Letter Template (.docx) | Optional | Built-in Stony Brook template |
+
+### Step 2 — Your Details
+
+Filled in once and applied to every job application you generate in the
+session. All fields are optional — blank fields are simply omitted from the
+output.
+
+**Personal & Contact Information:**
+- Full Name
+- Location (e.g. New York, NY)
+- Email
+- Phone
+- LinkedIn URL
+- GitHub URL
+
+**Cover Letter — Company & Date:**
+- Default Company Name (can be overridden per job in Step 3)
+- Company Address (optional)
+- City, State ZIP (optional)
+- Letter Date (pre-filled to today's date)
+
+The contact line in generated documents is built from whichever fields you
+fill in, separated by `|`:
+
+```
+New York, NY | jane@email.com | (555) 123-4567 | linkedin.com/in/janedoe | github.com/janedoe
+```
+
+### Step 3 — Job Applications
+
+Each job card contains:
+- A label field for your own reference (e.g. "Software Engineer @ Acme")
+- A company name override for the cover letter header
+- The job description text area
+- **✨ Tailor Resume** and **✨ Cover Letter** buttons — independent, run either or both
+- Preview expanders showing the fully populated document
+- Download buttons with filenames derived from the job label
+
+Click **➕ Add Another Job Application** to add as many jobs as you need.
+Previously generated documents persist in the session — generating a new job
+does not affect existing ones.
 
 ### Template requirements
 
-Your templates need no special modifications. The AI recognises placeholder
-content like "Organization/Company Name", "Skill based bullet #1",
-"Section One: Briefly introduce yourself…", etc. and replaces them with
-real content from your base resume.
-
-**What the AI will replace:** job entries, role names, dates, bullet points,
-skills lines, and cover letter body paragraphs.
-
-**What the AI will never touch:** your name, contact info, section headers
-(EDUCATION, PROFESSIONAL EXPERIENCE, etc.), education details, blank spacer
-paragraphs, and your cover letter salutation/sign-off.
+No modifications needed. The AI recognises placeholder content like
+"Organization/Company Name", "Skill based bullet #1",
+"Section One: Briefly introduce yourself…" and replaces them with real content
+from your base resume. It will never touch your name, contact info, section
+headers, education section, or cover letter salutation and sign-off.
 
 ---
 
 ## Available Models (47 total)
 
-The sidebar dropdown lists all 47 models available through SAP AI Core:
+The default is **GPT-5.2**. The full list is available in the sidebar dropdown:
 
 | Provider | Models |
 |---|---|
-| **OpenAI** | GPT-5, GPT-5 Mini, GPT-5 Nano, GPT-5.2, GPT-4.1, GPT-4.1 Mini, GPT-4.1 Nano, GPT-4o, GPT-4o Mini, o1, o3, o3-mini, o4-mini |
+| **OpenAI** | GPT-5.2 ⭐, GPT-5, GPT-5 Mini, GPT-5 Nano, GPT-4.1, GPT-4.1 Mini, GPT-4.1 Nano, GPT-4o, GPT-4o Mini, o1, o3, o3-mini, o4-mini |
 | **Anthropic** | Claude 4.6 Sonnet/Opus, Claude 4.5 Sonnet/Opus/Haiku, Claude 4 Sonnet/Opus, Claude 3.7 Sonnet, Claude 3.5 Sonnet, Claude 3 Haiku |
 | **Google** | Gemini 3 Pro Preview, Gemini 2.5 Pro/Flash/Flash-Lite, Gemini 2.0 Flash/Flash-Lite |
 | **Amazon** | Nova Premier, Nova Pro, Nova Lite, Nova Micro |
@@ -204,59 +239,35 @@ The sidebar dropdown lists all 47 models available through SAP AI Core:
 | **Perplexity** | Sonar Pro, Sonar, Sonar Deep Research |
 | **Cohere** | Command A Reasoning |
 
-**Recommended models for this use case:** GPT-4.1, Claude 3.5 Sonnet,
-Claude 4.5 Sonnet, or Gemini 2.5 Flash — all are fast, instruction-following,
-and good at structured JSON output.
+**Recommended for best results:** GPT-5.2, GPT-4.1, Claude 3.5 Sonnet, or
+Gemini 2.5 Flash — fast, instruction-following, and reliable JSON output.
 
 **Notes on specific models:**
-- **o1 / o3 / o4-mini** — reasoning models that think before responding. May
-  be slower and occasionally format JSON differently; if you see a parse error,
-  switch to a non-reasoning model.
-- **Sonar Deep Research** — performs live web searches before responding. Very
-  slow and overkill for resume tailoring.
-- **sap-abap-1** — SAP ABAP code model, intentionally excluded from the list.
-
-To add or update a model, edit the `AVAILABLE_MODELS` dict in `ai_utils.py`:
-
-```python
-AVAILABLE_MODELS = {
-    "My New Model  (Provider)": "exact-deployment-name",
-    ...
-}
-```
+- **Temperature is not sent** for any model — it caused errors on GPT-5 and
+  o-series and is not needed; the system prompts provide sufficient guidance
+- **o1 / o3 / o4-mini** — reasoning models, slower; may occasionally format
+  output differently
+- **Sonar Deep Research** — performs live web searches, very slow
+- **GPT-5** — currently intermittent on SAP AI Core; use GPT-5.2 instead
 
 ---
 
 ## Honesty Guardrail
 
-The system prompts in `ai_utils.py` are hardcoded constants — they cannot be
-changed through the UI and are sent on every API call:
+System prompts in `ai_utils.py` are hardcoded constants sent on every call:
 
-**Resume tailoring system prompt (abridged):**
-> You are an ethical resume tailor. You are strictly forbidden from inventing,
-> assuming, or adding any skills, metrics, job titles, degrees, or experiences
-> not explicitly present in the Base Resume. Reframe and reorder bullets to
-> match the job description keywords, but do not fabricate. If the job requires
-> a skill the candidate lacks, do not add it.
+**Resume:** The AI is forbidden from inventing skills, metrics, job titles,
+degrees, or experience not explicitly in the base resume. It reframes and
+reorders existing content to match the job description keywords — nothing more.
 
-**Cover letter system prompt (abridged):**
-> Use ONLY facts from the Base Resume. Do not invent anecdotes, fabricate
-> metrics, or use generic filler openings. Write exactly 3 body paragraphs.
-
-Temperature is set to **0.2** for resume tailoring and **0.3** for cover
-letters to minimise sampling randomness and further suppress hallucination.
-
----
-
-## Live Demo
-
-🚀 **[Try it here](https://ai-resume-cover-letter-reviewer-czvubpwu5qzozhypti4thk.streamlit.app/)**
+**Cover letter:** Uses only facts from the base resume. No fabricated
+anecdotes, no generic AI filler openings.
 
 ---
 
 ## Deploying to Streamlit Community Cloud (free)
 
-1. Push the full repo to GitHub — make sure `.env` is in `.gitignore`
+1. Push the full repo to GitHub — confirm `.env` is in `.gitignore`
 2. Go to [share.streamlit.io](https://share.streamlit.io) → **New app**
 3. Point it at your repo, branch `main`, main file `app.py`
 4. Go to **Settings → Secrets** and add your credentials in TOML format:
@@ -270,21 +281,21 @@ RESOURCE_GROUP = "default"
 SAP_DEPLOYMENT_ID = "dxxxxxxxxxxxxxxx"
 ```
 
-5. Deploy — Streamlit reads `runtime.txt` to use Python 3.12, which avoids
-   the `pydantic-core` Rust build failure that occurs on Python 3.14.
+5. Deploy — `runtime.txt` pins Python 3.12 to avoid the `pydantic-core` Rust
+   build failure on Python 3.14.
 
 > **Important:** The `templates/` folder must be committed to the repo.
-> Streamlit Cloud has no persistent filesystem, so the bundled templates
-> must ship with the code.
+> Streamlit Cloud has no persistent filesystem, so the bundled default
+> templates must ship with the code.
 
 ---
 
 ## Security Notes
 
-- **Never commit `.env`** — it's already in `.gitignore`
+- **Never commit `.env`** — already in `.gitignore`
 - `.env.example` contains only placeholder values and is safe to commit
-- The app does not log, store, or transmit your resume content anywhere
-  beyond the SAP AI Core API call
+- The app does not log, store, or transmit your resume content anywhere beyond
+  the SAP AI Core API call
 - SAP AI Core processes data within the SAP BTP trust boundary
 - File bytes are held only in Streamlit session state (in-memory, per-session)
 
