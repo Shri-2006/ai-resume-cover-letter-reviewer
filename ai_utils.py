@@ -195,15 +195,24 @@ Do NOT include salutation or sign-off — those are already in the template.
 
 # ── Core API call ─────────────────────────────────────────────────────────────
 def call_model(
-    model_name: str,          # display/hint name — not used for routing
+    model_name: str,
     system_prompt: str,
     user_prompt: str,
     max_tokens: int = 3000,
     temperature: float = 0.2,
 ) -> str:
     """
-    Call SAP AI Core directly via REST, using the deployment ID from
-    SAP_DEPLOYMENT_ID.  This bypasses all SDK model-name resolution.
+    Call SAP AI Core via the Orchestration service endpoint.
+    
+    The user's chatbot uses SAP_ORCHESTRATION_DEPLOYMENT_ID which means it
+    targets the orchestration service, not the raw model inference endpoint.
+    
+    Orchestration endpoint:
+      POST {SAP_AI_API_URL}/v2/inference/deployments/{id}/completion
+    
+    This is different from the standard OpenAI-compatible endpoint
+      POST .../v1/chat/completions
+    which 404s against orchestration deployments.
     """
     ok, missing = validate_credentials()
     if not ok:
@@ -212,12 +221,14 @@ def call_model(
             f"Add these to your Streamlit Secrets (Settings → Secrets)."
         )
 
-    token         = _get_bearer_token()
-    base_url      = os.environ["SAP_AI_API_URL"].rstrip("/")
-    deployment_id = os.environ["SAP_DEPLOYMENT_ID"]
+    token          = _get_bearer_token()
+    base_url       = os.environ["SAP_AI_API_URL"].rstrip("/")
+    deployment_id  = os.environ["SAP_DEPLOYMENT_ID"]
     resource_group = os.environ["RESOURCE_GROUP"]
 
-    url = f"{base_url}/v2/inference/deployments/{deployment_id}/v1/chat/completions"
+    # Orchestration service endpoint — this is what works with deployment IDs
+    # created via the SAP AI Core Orchestration scenario.
+    url = f"{base_url}/v2/inference/deployments/{deployment_id}/completion"
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -225,24 +236,64 @@ def call_model(
         "Content-Type": "application/json",
     }
 
+    # Orchestration request body format (different from OpenAI chat completions)
     body = {
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": user_prompt},
-        ],
-        "max_tokens": max_tokens,
-        "temperature": temperature,
+        "orchestration_config": {
+            "module_configurations": {
+                "llm": {
+                    "model_name": model_name,
+                    "model_params": {
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                    },
+                },
+                "templating": {
+                    "template": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": user_prompt},
+                    ]
+                },
+            }
+        }
     }
 
     resp = requests.post(url, headers=headers, json=body, timeout=120)
 
+    if resp.status_code == 404:
+        # Deployment might actually be a direct model deployment (not orchestration).
+        # Fall back to the standard OpenAI-compatible endpoint.
+        url_fallback = (
+            f"{base_url}/v2/inference/deployments/{deployment_id}/v1/chat/completions"
+        )
+        body_fallback = {
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_prompt},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        resp = requests.post(url_fallback, headers=headers, json=body_fallback, timeout=120)
+
     if not resp.ok:
         raise RuntimeError(
-            f"SAP AI Core API error {resp.status_code}: {resp.text[:500]}"
+            f"SAP AI Core API error {resp.status_code}:\n{resp.text[:600]}"
         )
 
     data = resp.json()
-    return data["choices"][0]["message"]["content"].strip()
+
+    # Orchestration response shape:  data["orchestration_result"]["choices"][0]["message"]["content"]
+    # Standard chat completions shape: data["choices"][0]["message"]["content"]
+    try:
+        return (
+            data.get("orchestration_result", data)
+            ["choices"][0]["message"]["content"].strip()
+        )
+    except (KeyError, IndexError, TypeError):
+        # Last resort — return the raw JSON so the user can see what came back
+        raise RuntimeError(
+            f"Unexpected response structure from SAP AI Core:\n{json.dumps(data, indent=2)[:600]}"
+        )
 
 
 # ── JSON parsing helper ───────────────────────────────────────────────────────
