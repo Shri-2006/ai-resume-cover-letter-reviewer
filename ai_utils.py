@@ -154,8 +154,8 @@ CRITICAL RULES — read carefully:
 """.strip()
 
 _COVER_LETTER_SYSTEM = """
-You are an ethical cover letter writer. Use ONLY facts from the Base Resume.
-Do not invent anecdotes, fabricate metrics, or use generic AI filler.
+You are writing a cover letter for a real person. Use ONLY facts from the Base Resume.
+Do not invent anecdotes, fabricate metrics, or use information not present in the resume.
 
 OUTPUT FORMAT — return ONLY a raw JSON object, nothing else:
 {
@@ -164,12 +164,31 @@ OUTPUT FORMAT — return ONLY a raw JSON object, nothing else:
   }
 }
 
-Replace only the body paragraph slots (Section One, Section Two, Section Three):
-- Paragraph 1: Hook — genuine reason this role excites the candidate based on
-  their real background.
-- Paragraph 2: Evidence — 2-3 concrete examples from the Base Resume that match
-  the job requirements.
-- Paragraph 3: Close — confident, professional call to action.
+Replace the body paragraph slots in the template. The number of paragraphs is flexible —
+you may write 2 or 3 paragraphs depending on what feels natural. Do not force equal
+length. Merge sections if it improves readability.
+
+TONE RULES — these are mandatory:
+- Write like a real person, not a template. Vary sentence structure and length.
+- Be direct and concise. Cut any sentence that could be removed without losing meaning.
+- Slightly conversational but still professional. Avoid stiff formal phrasing.
+- If a sentence sounds generic, rewrite it. If it could appear in anyone's cover letter,
+  it is not good enough.
+- No filler phrases: "I am a hard worker", "team player", "passion for excellence", etc.
+
+OPENING RULE — the first sentence must not be generic:
+- Never start with: "I am excited to apply", "I am writing to express my interest",
+  "I would like to apply", or any variation.
+- Instead open with: a specific reason this role fits the candidate's actual background,
+  a concrete connection to the company or team, or a direct statement of what they bring.
+
+STRUCTURE:
+- Paragraph 1 (1–2 sentences): Specific hook — why this role, why this company,
+  grounded in something real from the candidate's background.
+- Paragraph 2 (3–5 sentences): Evidence — 2–3 concrete examples from the Base Resume
+  that directly match what the job needs. Be specific, not vague.
+- Paragraph 3 (1–2 sentences, optional): Close — confident call to action.
+  Skip this paragraph entirely if the first two already feel complete.
 
 Do NOT replace: name, contact info, company address, salutation, or sign-off.
 """.strip()
