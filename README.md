@@ -121,38 +121,21 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Open `.env` and fill in the five values from your SAP AI Core **service key**
-JSON, which you download from:
-
-```
-BTP Cockpit → Services → Instances & Subscriptions
-  → AI Core instance → Service Keys → your-key.json
-```
-
-The service key JSON maps to `.env` variables like this:
-
-```json
-{
-  "clientid":     "sb-xxxx",          →  AICORE_CLIENT_ID
-  "clientsecret": "xxxx",             →  AICORE_CLIENT_SECRET
-  "url":          "https://xxx.authentication.eu10.hana.ondemand.com",
-                                      →  AICORE_AUTH_URL  (append /oauth/token)
-  "serviceurls": {
-    "AI_API_URL": "https://api.ai.eu10.aws.ml.hana.ondemand.com"
-                                      →  AICORE_BASE_URL
-  }
-}
-```
-
-Completed `.env`:
+These are the **same variable names** your existing SAP chatbot uses — copy the
+values directly from your chatbot's environment:
 
 ```env
-AICORE_AUTH_URL=https://mysubdomain.authentication.eu10.hana.ondemand.com/oauth/token
-AICORE_CLIENT_ID=sb-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx!b12345|aicore!b123
-AICORE_CLIENT_SECRET=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789==
-AICORE_BASE_URL=https://api.ai.eu10.aws.ml.hana.ondemand.com
-AICORE_RESOURCE_GROUP=default
+SAP_AUTH_URL=https://yoursubdomain.authentication.eu10.hana.ondemand.com/oauth/token
+SAP_CLIENT_ID=sb-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx!b12345|aicore!b123
+SAP_CLIENT_SECRET=xxxx
+SAP_AI_API_URL=https://api.ai.eu10.aws.ml.hana.ondemand.com
+RESOURCE_GROUP=default
+SAP_DEPLOYMENT_ID=dxxxxxxxxxxxxxxx
 ```
+
+`SAP_DEPLOYMENT_ID` is the one new variable — grab it from
+**SAP AI Launchpad → ML Operations → Deployments** and copy the ID of any
+RUNNING deployment (the same one your chatbot uses works fine).
 
 ### 5. Run the app
 
@@ -279,11 +262,12 @@ letters to minimise sampling randomness and further suppress hallucination.
 4. Go to **Settings → Secrets** and add your credentials in TOML format:
 
 ```toml
-AICORE_AUTH_URL = "https://yoursubdomain.authentication.eu10.hana.ondemand.com/oauth/token"
-AICORE_CLIENT_ID = "sb-xxxx"
-AICORE_CLIENT_SECRET = "xxxx"
-AICORE_BASE_URL = "https://api.ai.eu10.aws.ml.hana.ondemand.com"
-AICORE_RESOURCE_GROUP = "default"
+SAP_AUTH_URL = "https://yoursubdomain.authentication.eu10.hana.ondemand.com/oauth/token"
+SAP_CLIENT_ID = "sb-xxxx"
+SAP_CLIENT_SECRET = "xxxx"
+SAP_AI_API_URL = "https://api.ai.eu10.aws.ml.hana.ondemand.com"
+RESOURCE_GROUP = "default"
+SAP_DEPLOYMENT_ID = "dxxxxxxxxxxxxxxx"
 ```
 
 5. Deploy — Streamlit reads `runtime.txt` to use Python 3.12, which avoids

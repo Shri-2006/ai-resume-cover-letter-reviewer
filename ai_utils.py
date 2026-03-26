@@ -1,17 +1,33 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  ai_utils.py  –  SAP AI Core calls, no-placeholder approach
+#  ai_utils.py  –  SAP AI Core direct REST API (no SDK model-name lookup)
+#
+#  Uses the same env vars as the user's working chatbot:
+#    SAP_AUTH_URL              – OAuth2 token endpoint
+#    SAP_CLIENT_ID             – OAuth2 client ID
+#    SAP_CLIENT_SECRET         – OAuth2 client secret
+#    SAP_AI_API_URL            – AI Core base URL (no trailing slash)
+#    RESOURCE_GROUP            – Resource group (usually "default")
+#    SAP_DEPLOYMENT_ID         – Default deployment ID to use
+#
+#  How it works:
+#    1. Fetch an OAuth2 bearer token from SAP_AUTH_URL
+#    2. POST to /v2/inference/deployments/{deployment_id}/v1/chat/completions
+#       with the token and AI-Resource-Group header
+#    3. Parse the OpenAI-compatible response
+#
+#  This is exactly how the working chatbot calls SAP AI Core — no SDK
+#  model-name-to-deployment resolution that was causing "No deployment found".
 # ─────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
-import json, os, re
-
-try:
-    from gen_ai_hub.proxy.native.openai import OpenAI as AICoreOpenAI
-    _SDK_AVAILABLE = True
-except ImportError:
-    _SDK_AVAILABLE = False
+import json, os, re, time
+import requests
 
 # ── Model catalogue ───────────────────────────────────────────────────────────
+# Display label → SAP model name hint (sent in the request body).
+# The actual routing is determined by the deployment ID, not this name.
+# This list is cosmetic / informational — all requests go through whichever
+# deployment ID is configured in SAP_DEPLOYMENT_ID.
 AVAILABLE_MODELS: dict[str, str] = {
     # ── OpenAI ────────────────────────────────────────────────────────────────
     "GPT-5  (OpenAI)":                    "gpt-5",
@@ -72,17 +88,59 @@ AVAILABLE_MODELS: dict[str, str] = {
     "Command A Reasoning  (Cohere)":      "cohere--command-a-reasoning",
 }
 
-# ── Credential check ─────────────────────────────────────────────────────────
-_REQUIRED = [
-    "AICORE_AUTH_URL", "AICORE_CLIENT_ID", "AICORE_CLIENT_SECRET",
-    "AICORE_BASE_URL", "AICORE_RESOURCE_GROUP",
+# ── Required env vars (matching the user's existing chatbot setup) ────────────
+_REQUIRED_VARS = [
+    "SAP_AUTH_URL",
+    "SAP_CLIENT_ID",
+    "SAP_CLIENT_SECRET",
+    "SAP_AI_API_URL",
+    "RESOURCE_GROUP",
+    "SAP_DEPLOYMENT_ID",
 ]
 
 def validate_credentials() -> tuple[bool, list[str]]:
-    missing = [v for v in _REQUIRED if not os.getenv(v)]
-    return (len(missing) == 0), missing
+    missing = [v for v in _REQUIRED_VARS if not os.getenv(v)]
+    return len(missing) == 0, missing
 
-# ── Honesty guardrails (hardcoded, never overrideable) ────────────────────────
+
+# ── OAuth2 token cache (avoid fetching a new token on every single call) ──────
+_token_cache: dict = {"token": None, "expires_at": 0.0}
+
+def _get_bearer_token() -> str:
+    """
+    Fetch (or return cached) OAuth2 bearer token from SAP_AUTH_URL.
+    Tokens are cached until 60 seconds before expiry.
+    """
+    now = time.time()
+    if _token_cache["token"] and now < _token_cache["expires_at"]:
+        return _token_cache["token"]
+
+    auth_url     = os.environ["SAP_AUTH_URL"]
+    client_id    = os.environ["SAP_CLIENT_ID"]
+    client_secret = os.environ["SAP_CLIENT_SECRET"]
+
+    # Ensure the token URL ends with /oauth/token
+    if not auth_url.rstrip("/").endswith("/oauth/token"):
+        auth_url = auth_url.rstrip("/") + "/oauth/token"
+
+    resp = requests.post(
+        auth_url,
+        data={"grant_type": "client_credentials"},
+        auth=(client_id, client_secret),
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    token = data["access_token"]
+    expires_in = int(data.get("expires_in", 3600))
+    _token_cache["token"] = token
+    _token_cache["expires_at"] = now + expires_in - 60  # 60s safety buffer
+
+    return token
+
+
+# ── Honesty guardrails ────────────────────────────────────────────────────────
 _RESUME_SYSTEM = """
 You are an ethical resume tailor. You are strictly forbidden from inventing,
 assuming, or adding any skills, metrics, job titles, degrees, or experiences
@@ -106,7 +164,7 @@ Rules for which paragraph indices to include:
 - Replace all "Skill based bullet" lines and sample bullet text with REAL, tailored bullets.
 - Replace the skills section lines (Computer:, Language:, Certifications:) with real values.
 - For cover letters: replace the Section One/Two/Three body paragraphs only.
-- Do NOT replace: the candidate name, contact info line, section headers (EDUCATION, 
+- Do NOT replace: the candidate name, contact info line, section headers (EDUCATION,
   PROFESSIONAL EXPERIENCE, etc.), or blank spacer paragraphs.
 - If the base resume has fewer jobs than template slots, set unused slots to empty string "".
 - Never add skills or experience the candidate does not have.
@@ -134,88 +192,68 @@ Write exactly 3 body paragraphs (one per Section slot):
 Do NOT include salutation or sign-off — those are already in the template.
 """.strip()
 
-# ── Core LLM call ─────────────────────────────────────────────────────────────
-# Known SAP AI Core SDK error substrings that get returned as message content
-# instead of raised as exceptions in some SDK versions.
-_SAP_ERROR_PATTERNS = (
-    "no deployment found",
-    "deployment not found",
-    "no running deployment",
-    "could not find deployment",
-    "model not found",
-    "resource group",
-    "scenario not found",
-)
 
+# ── Core API call ─────────────────────────────────────────────────────────────
 def call_model(
-    model_name: str,
+    model_name: str,          # display/hint name — not used for routing
     system_prompt: str,
     user_prompt: str,
     max_tokens: int = 3000,
     temperature: float = 0.2,
 ) -> str:
-    if not _SDK_AVAILABLE:
-        raise RuntimeError("generative-ai-hub-sdk not installed.")
+    """
+    Call SAP AI Core directly via REST, using the deployment ID from
+    SAP_DEPLOYMENT_ID.  This bypasses all SDK model-name resolution.
+    """
     ok, missing = validate_credentials()
     if not ok:
-        raise RuntimeError(f"Missing env vars: {', '.join(missing)}")
-    client = AICoreOpenAI()
-    try:
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": user_prompt},
-            ],
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-    except Exception as e:
-        err = str(e)
-        # Re-raise SDK deployment errors as RuntimeError with clear guidance
-        if any(p in err.lower() for p in _SAP_ERROR_PATTERNS):
-            raise RuntimeError(
-                f"SAP AI Core could not find a running deployment for model "
-                f"'{model_name}'. Check that this model is deployed and "
-                f"running in your resource group via SAP AI Launchpad → "
-                f"ML Operations → Deployments.\n\nOriginal error: {err}"
-            ) from e
-        raise
-
-    content = response.choices[0].message.content.strip()
-
-    # Some SDK versions return error messages as content instead of raising.
-    # Detect and surface them properly before JSON parsing attempts them.
-    if any(p in content.lower() for p in _SAP_ERROR_PATTERNS):
         raise RuntimeError(
-            f"SAP AI Core could not find a running deployment for model "
-            f"'{model_name}'.\n\n"
-            f"Go to SAP AI Launchpad → ML Operations → Deployments and "
-            f"confirm that '{model_name}' has status 'RUNNING'.\n\n"
-            f"SAP error: {content}"
+            f"Missing environment variables: {', '.join(missing)}\n\n"
+            f"Add these to your Streamlit Secrets (Settings → Secrets)."
         )
 
-    return content
+    token         = _get_bearer_token()
+    base_url      = os.environ["SAP_AI_API_URL"].rstrip("/")
+    deployment_id = os.environ["SAP_DEPLOYMENT_ID"]
+    resource_group = os.environ["RESOURCE_GROUP"]
+
+    url = f"{base_url}/v2/inference/deployments/{deployment_id}/v1/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "AI-Resource-Group": resource_group,
+        "Content-Type": "application/json",
+    }
+
+    body = {
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+
+    resp = requests.post(url, headers=headers, json=body, timeout=120)
+
+    if not resp.ok:
+        raise RuntimeError(
+            f"SAP AI Core API error {resp.status_code}: {resp.text[:500]}"
+        )
+
+    data = resp.json()
+    return data["choices"][0]["message"]["content"].strip()
+
 
 # ── JSON parsing helper ───────────────────────────────────────────────────────
 def parse_replacements(raw: str) -> dict[str, str]:
-    """
-    Extract the replacements dict from the AI response.
-    Handles markdown code fences, leading/trailing noise, etc.
-    """
-    # Strip ```json ... ``` or ``` ... ``` fences
     raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
-
-    # Try to parse the whole thing as JSON first
     try:
         data = json.loads(raw)
         if isinstance(data, dict):
-            # Accept {"replacements": {...}} or just {"0": "text", ...}
             return data.get("replacements", data)
     except json.JSONDecodeError:
         pass
-
-    # Fallback: find the first {...} blob
     match = re.search(r'\{.*\}', raw, re.DOTALL)
     if match:
         try:
@@ -223,8 +261,8 @@ def parse_replacements(raw: str) -> dict[str, str]:
             return data.get("replacements", data)
         except json.JSONDecodeError:
             pass
-
     raise ValueError(f"Could not parse JSON from AI response:\n{raw[:500]}")
+
 
 # ── Domain functions ──────────────────────────────────────────────────────────
 def tailor_resume(
@@ -233,10 +271,6 @@ def tailor_resume(
     template_context: str,
     model_name: str,
 ) -> dict[str, str]:
-    """
-    Returns {paragraph_index: new_text} for every paragraph the AI wants
-    to rewrite in the resume template.
-    """
     prompt = f"""=== RESUME TEMPLATE (paragraph indices) ===
 {template_context}
 
@@ -247,7 +281,6 @@ def tailor_resume(
 {job_description}
 
 Return the JSON replacements object as instructed."""
-
     raw = call_model(model_name, _RESUME_SYSTEM, prompt, max_tokens=3000, temperature=0.2)
     return parse_replacements(raw)
 
@@ -258,9 +291,6 @@ def generate_cover_letter(
     template_context: str,
     model_name: str,
 ) -> dict[str, str]:
-    """
-    Returns {paragraph_index: new_text} for the cover letter body paragraphs.
-    """
     prompt = f"""=== COVER LETTER TEMPLATE (paragraph indices) ===
 {template_context}
 
@@ -271,6 +301,5 @@ def generate_cover_letter(
 {job_description}
 
 Return the JSON replacements object as instructed."""
-
     raw = call_model(model_name, _COVER_LETTER_SYSTEM, prompt, max_tokens=1200, temperature=0.3)
     return parse_replacements(raw)
