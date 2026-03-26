@@ -162,7 +162,7 @@ def apply_user_info(doc: Document, user_info: dict) -> None:
     contact_parts = [p for p in [location, email, phone, linkedin, github] if p]
     contact_line  = " | ".join(contact_parts) if contact_parts else ""
 
-    # Known placeholder strings present in the default Stony Brook templates
+    # Known placeholder strings in the default templates
     _NAME_PLACEHOLDERS = {"Wolfie Seawolf"}
     _CONTACT_SIGNALS   = {
         "professional_email@gmail.com",
@@ -170,11 +170,11 @@ def apply_user_info(doc: Document, user_info: dict) -> None:
         "(123) 456",
         "(XXX) XXX",
     }
-    _COMPANY_PLACEHOLDER    = "Company name"
-    _ADDR1_PLACEHOLDER      = "XXXX Employer Rd."
-    _ADDR2_PLACEHOLDER      = "New York, NY 11004"
-    _DATE_PLACEHOLDER       = "January 1, 2024"
-    _LOCATION_PLACEHOLDER   = "Town, State"
+    _COMPANY_PLACEHOLDER  = "Company name"
+    _ADDR1_PLACEHOLDER    = "XXXX Employer Rd."
+    _ADDR2_PLACEHOLDER    = "New York, NY 11004"
+    _DATE_PLACEHOLDER     = "January 1, 2024"
+    _LOCATION_PLACEHOLDER = "Town, State"
 
     for para in doc.paragraphs:
         full = "".join(r.text for r in para.runs)
@@ -187,8 +187,9 @@ def apply_user_info(doc: Document, user_info: dict) -> None:
 
         # ── Contact info line ─────────────────────────────────────────────────
         if contact_line and any(sig in full for sig in _CONTACT_SIGNALS):
-            # Cover letter contact line has the date crammed on the same paragraph;
-            # strip it off and add the user's date separately if supplied.
+            # The Stony Brook cover letter template has the date crammed onto
+            # the same paragraph as the contact info. If that pattern is detected,
+            # append the user's date to the contact line; otherwise just replace.
             if date and _DATE_PLACEHOLDER in full:
                 _set_para_text(para, f"{contact_line}  {date}")
             else:
