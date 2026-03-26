@@ -114,13 +114,14 @@ def apply_user_info(doc: Document, user_info: dict) -> None:
     email         = user_info.get("email", "").strip()
     phone         = user_info.get("phone", "").strip()
     linkedin      = user_info.get("linkedin", "").strip()
+    github        = user_info.get("github", "").strip()
     company       = user_info.get("company", "").strip()
     company_addr1 = user_info.get("company_addr1", "").strip()
     company_addr2 = user_info.get("company_addr2", "").strip()
     date          = user_info.get("date", "").strip()
 
-    # Build contact line from provided fields
-    contact_parts = [p for p in [location, email, phone, linkedin] if p]
+    # Build contact line from provided fields (GitHub appended after LinkedIn)
+    contact_parts = [p for p in [location, email, phone, linkedin, github] if p]
     contact_line  = " | ".join(contact_parts) if contact_parts else ""
 
     # Known placeholder strings present in the default Stony Brook templates

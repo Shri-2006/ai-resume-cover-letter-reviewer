@@ -177,6 +177,7 @@ with st.expander("👤 Personal & Contact Information", expanded=True):
     with c2:
         user_phone    = st.text_input("Phone",        placeholder="(555) 123-4567",          key="u_phone")
         user_linkedin = st.text_input("LinkedIn URL", placeholder="linkedin.com/in/janedoe", key="u_li")
+        user_github   = st.text_input("GitHub URL",   placeholder="github.com/janedoe (optional)", key="u_gh")
 
 with st.expander("🏢 Cover Letter — Company & Date", expanded=True):
     cc1, cc2 = st.columns(2, gap="large")
@@ -264,6 +265,7 @@ def _generate(
                 "email":         user_email,
                 "phone":         user_phone,
                 "linkedin":      user_linkedin,
+                "github":        user_github,
                 "company":       company_override or default_company,
                 "company_addr1": default_addr1,
                 "company_addr2": default_addr2,
