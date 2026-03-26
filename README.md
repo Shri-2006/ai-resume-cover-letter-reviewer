@@ -16,6 +16,7 @@ generate tailored resumes and cover letters for as many jobs as you want
 without re-uploading anything.
 
 ---
+Known Problems: It is horrible at creating resumes based on the template I have provided. 
 
 ## Live Demo
 
